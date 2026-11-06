@@ -33,7 +33,14 @@
     <p id="introText">Finding your city…</p>
   </div>
 
+  <aside class="board" id="board" aria-label="Brightest cities">
+    <h2>🏆 Brightest cities</h2>
+    <ol id="boardList"></ol>
+    <p class="board-empty" id="boardEmpty">No diyas yet. Light the first one!</p>
+  </aside>
+
   <nav class="cam" aria-label="Camera">
+    <button type="button" id="boardBtn" class="board-toggle" title="Brightest cities">🏆</button>
     <button type="button" id="camMe" title="My city">📍</button>
     <button type="button" id="camIndia" title="India">🇮🇳</button>
     <button type="button" id="camWorld" title="Whole world">🌏</button>

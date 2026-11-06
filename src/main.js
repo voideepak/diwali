@@ -64,10 +64,10 @@ const myPub = getPublicKey(secret);
 // ============================================================
 const el = $('globe');
 const globe = new Globe(el, { rendererConfig: { antialias: true, alpha: false } })
-  .globeImageUrl('img/earth-night.jpg')
+  .globeImageUrl('img/earth-dark.jpg')
   .backgroundImageUrl('img/night-sky.png')
   .atmosphereColor('#ff9d4d')
-  .atmosphereAltitude(0.2)
+  .atmosphereAltitude(0.16)
   .showGraticules(false)
   .width(innerWidth)
   .height(innerHeight);
@@ -84,12 +84,13 @@ controls.minDistance = R * 1.08;
 controls.maxDistance = R * 5;
 globe.pointOfView({ lat: 18, lng: 40, altitude: 2.7 }, 0);
 
-// Brighten the night texture a little so city lights pop
+// Dark globe: only the real city lights glow (a separate lights-only map), so diyas stand out
 const mat = globe.globeMaterial();
-mat.shininess = 4;
-// Make the city lights glow: use the night texture itself as an emissive map
-globe.onGlobeReady(() => {
-  if (mat.map) { mat.emissiveMap = mat.map; mat.emissive = new THREE.Color(0xffffff); mat.emissiveIntensity = 0.9; mat.needsUpdate = true; }
+mat.shininess = 2;
+mat.color = new THREE.Color(0x8a93a8);
+new THREE.TextureLoader().load('img/earth-lights.jpg', (t) => {
+  t.colorSpace = THREE.SRGBColorSpace;
+  mat.emissiveMap = t; mat.emissive = new THREE.Color(0xffb04a); mat.emissiveIntensity = 1.3; mat.needsUpdate = true;
 });
 
 const camDist = () => camera.position.length();
@@ -214,12 +215,14 @@ function launch(lat, lng, opts = {}) {
   const start = globe.getCoords(lat, lng, 0.004);
   const n = new THREE.Vector3(start.x, start.y, start.z).normalize();
   const height = rand(5, 8) * scale + 1.5;
+  const fuse = opts.fuse || 0.9;
   rockets.push({
     pos: new THREE.Vector3(start.x, start.y, start.z),
     n,
-    speed: height / 0.9,
+    speed: height / fuse,
     t: 0,
-    fuse: 0.9,
+    fuse,
+    snd: opts.snd || 0,
     delay: opts.delay || 0,
     type: opts.type || pick(CRACKER_TYPES),
     colA: opts.colA || pick(COLORS),
@@ -239,6 +242,7 @@ function simulate() {
   for (let i = rockets.length - 1; i >= 0; i--) {
     const r = rockets[i];
     if (r.delay > 0) { r.delay -= dt; continue; }
+    if (r.t === 0 && r.snd >= 0.5) playWhistle(r.fuse, r.snd);
     r.t += dt;
     r.pos.addScaledVector(r.n, r.speed * dt * (1.2 - r.t / r.fuse * 0.6));
     _g.set(0, 0, 0);
@@ -248,6 +252,7 @@ function simulate() {
     }
     if (r.t >= r.fuse) {
       explode(r.pos, r.n, r.type, r.scale, r.colA, r.colB);
+      if (r.snd) playBoom(r.snd, r.type);
       rockets.splice(i, 1);
     }
   }
@@ -347,7 +352,7 @@ function cityKey(city, cc, lat, lng) {
 }
 function makeMarker(cluster) {
   const group = new THREE.Group();
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true }));
   const diya = new THREE.Sprite(new THREE.SpriteMaterial({ map: DIYA_TEX, depthWrite: false, transparent: true }));
   diya.center.set(0.5, 0.12);
   group.add(glow, diya);
@@ -368,25 +373,60 @@ globe
 function updateCityMarkers(t) {
   const dist = camDist() - R;
   const base = clamp(dist / 60, 0.25, 4.5);
+  // Glows skip the depth test (it caused a dark patch), so hide those on the far side by hand
+  const cam = globe.camera().position, cl = cam.length(), horizon = R / cl;
   for (const c of cities.values()) {
     if (!c.obj) continue;
     const { glow, diya, phase } = c.obj.userData;
+    const p = c.obj.position;
+    glow.visible = (p.x * cam.x + p.y * cam.y + p.z * cam.z) / (p.length() * cl || 1) > horizon - 0.02;
     const flick = 1 + 0.08 * Math.sin(t * 7 + phase) + 0.05 * Math.sin(t * 13 + phase * 2);
-    const weight = 1 + Math.log2(1 + c.diyas) * 0.35;
+    const lit = Math.log2(1 + c.diyas); // more diyas -> the city glows bigger and brighter
     const pop = c.popUntil && t < c.popUntil ? 1 + 0.6 * Math.sin(((c.popUntil - t) / 1.2) * Math.PI) : 1;
-    const s = base * weight * pop;
+    const s = base * (1 + lit * 0.25) * pop;
     diya.visible = c.diyas > 0;
     diya.scale.set(s * 1.6, s * 2.0 * (0.97 + 0.03 * flick), 1);
-    glow.scale.set(s * 4.5 * flick, s * 4.5 * flick, 1);
-    glow.material.opacity = (c.diyas > 0 ? 0.75 : 0.45) * flick;
+    const gs = base * (c.diyas > 0 ? 4 + lit * 2.2 : 2.5) * pop * flick;
+    glow.scale.set(gs, gs, 1);
+    glow.material.opacity = (c.diyas > 0 ? Math.min(1, 0.6 + lit * 0.1) : 0.3) * flick;
   }
 }
 
 let cityListTimer = null;
 function refreshCities() {
   clearTimeout(cityListTimer);
-  cityListTimer = setTimeout(() => globe.customLayerData([...cities.values()]), 60);
+  cityListTimer = setTimeout(() => { globe.customLayerData([...cities.values()]); renderBoard(); }, 60);
 }
+
+// Leaderboard: the cities glowing brightest (most diyas)
+const boardList = $('boardList');
+function renderBoard() {
+  const ranked = [...cities.values()].filter((c) => c.diyas > 0)
+    .sort((a, b) => b.diyas - a.diyas || b.crackers - a.crackers);
+  const myKey = me ? cityKey(me.city, me.cc, me.lat, me.lng) : null;
+  const top = ranked.slice(0, 7);
+  const myRank = myKey ? ranked.findIndex((c) => c.key === myKey) : -1;
+  const max = top.length ? top[0].diyas : 1;
+  const medal = (i) => ['🥇', '🥈', '🥉'][i] || String(i + 1);
+  const row = (c, i) => `<li class="${c.key === myKey ? 'me' : ''}" data-key="${escapeHtml(c.key)}">
+    <span class="rank">${medal(i)}</span>
+    <span class="name">${flag(c.cc)} ${escapeHtml(c.city || countryName(c.cc) || 'Somewhere')}</span>
+    <span class="n">🪔 ${c.diyas.toLocaleString()}</span>
+    <span class="bar" style="width:${Math.max(6, (c.diyas / max) * 100).toFixed(1)}%"></span></li>`;
+  let html = top.map(row).join('');
+  if (myRank >= 7) html += `<li class="gap">⋯</li>` + row(ranked[myRank], myRank);
+  boardList.innerHTML = html;
+  $('boardEmpty').hidden = ranked.length > 0;
+}
+boardList.addEventListener('click', (ev) => {
+  const li = ev.target.closest('li[data-key]');
+  const c = li && cities.get(li.dataset.key);
+  if (!c) return;
+  controls.autoRotate = false;
+  globe.pointOfView({ lat: c.lat, lng: c.lng, altitude: 0.55 }, 1500);
+  if (matchMedia('(max-width: 820px)').matches) $('board').classList.remove('open');
+});
+$('boardBtn').addEventListener('click', () => $('board').classList.toggle('open'));
 
 // ============================================================
 // Events (Nostr)
@@ -447,12 +487,12 @@ function ingest(ev, local = false) {
     if (local) {
       // your own cracker is the hero: a bigger volley right above your city
       const s = Math.max(fxScale(), 1.5) * 1.8;
-      launch(jl, jg, { type: e.kind || undefined, scale: s });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.35, scale: s * 0.8 });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.7, scale: s * 0.9 });
+      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: 1.6, snd: 1 });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6 });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7 });
     } else {
-      launch(jl, jg, { type: e.kind || undefined });
-      if (Math.random() < 0.5) launch(jl + rand(-0.2, 0.2), jg + rand(-0.2, 0.2), { delay: rand(0.2, 0.6) });
+      launch(jl, jg, { type: e.kind || undefined, snd: 0.3 });
+      if (Math.random() < 0.5) launch(jl + rand(-0.2, 0.2), jg + rand(-0.2, 0.2), { delay: rand(0.2, 0.6), snd: 0.2 });
     }
   } else {
     c.popUntil = performance.now() / 1000 + 1.2;
@@ -533,7 +573,7 @@ function publish(content) {
 (function ambient() {
   if (!document.hidden && initialDone && crackerPool.length && !reduceMotion) {
     const e = pick(crackerPool);
-    launch(e.lat + rand(-0.25, 0.25), e.lng + rand(-0.25, 0.25), { type: e.kind || undefined });
+    launch(e.lat + rand(-0.25, 0.25), e.lng + rand(-0.25, 0.25), { type: e.kind || undefined, snd: 0.12 });
   }
   const busy = Math.min(crackerPool.length, 60);
   setTimeout(ambient, rand(2600, 4200) - busy * 30);
@@ -587,6 +627,7 @@ function setMe(l) {
   me = { ...l, lat: round1(l.lat), lng: round1(l.lng) };
   store.set('dg.loc', me);
   $('locLabel').textContent = placeLabel(me);
+  renderBoard();
 }
 
 $('locFix').addEventListener('click', async () => {
@@ -679,7 +720,7 @@ $('crackerBtn').addEventListener('click', () => {
   const ev = publish({ t: 'c', n: name, city: me.city, cc: me.cc, la: me.lat, lo: me.lng, k });
   const wasClose = altitude() < 1.0;
   pullBack();
-  setTimeout(() => { ingest(ev, true); boom(1.0); }, wasClose ? 700 : 0);
+  setTimeout(() => ingest(ev, true), wasClose ? 700 : 0);
 });
 
 // ============================================================
@@ -755,10 +796,44 @@ let muted = store.get('dg.muted', false);
 const muteBtn = $('muteBtn');
 const syncMute = () => { muteBtn.textContent = muted ? '🔇' : '🔊'; };
 syncMute();
-muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', muted); syncMute(); });
-let ac = null;
+muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', muted); syncMute(); ensureAudio(); });
+let ac = null, master = null, reverbIn = null;
+// Real recordings (public domain, Wikimedia Commons): a rocket whistle and three bursts
+const SFX = {};
+const sfxFiles = ['whistle', 'boom1', 'boom2', 'boom3'];
+const sfxBytes = sfxFiles.map((n) => fetch(`sfx/${n}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
+let sfxDecoding = false;
 function ensureAudio() {
-  try { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch { ac = null; }
+  try {
+    if (!ac) {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      master = ac.createGain(); master.gain.value = 0.9;
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.ratio.value = 6;
+      master.connect(comp).connect(ac.destination);
+      // night-air echo: a generated reverb tail shared by every burst
+      const conv = ac.createConvolver(); conv.buffer = impulse(3.2);
+      const wet = ac.createGain(); wet.gain.value = 0.5;
+      reverbIn = ac.createGain();
+      reverbIn.connect(conv).connect(wet).connect(master);
+    }
+    if (ac.state === 'suspended') ac.resume();
+    if (!sfxDecoding) {
+      sfxDecoding = true;
+      sfxFiles.forEach((n, i) => sfxBytes[i].then((buf) => buf && new Promise((ok, bad) => ac.decodeAudioData(buf.slice(0), ok, bad)))
+        .then((d) => { if (d) SFX[n] = d; }).catch(() => {}));
+    }
+  } catch { ac = null; }
+}
+// sound starts working after the first tap or drag anywhere (browser autoplay rules)
+addEventListener('pointerdown', ensureAudio, { once: true });
+function impulse(sec) {
+  const len = Math.floor(ac.sampleRate * sec), b = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.5);
+  }
+  return b;
 }
 function noiseBuffer(sec) {
   const b = ac.createBuffer(1, ac.sampleRate * sec, ac.sampleRate);
@@ -766,25 +841,60 @@ function noiseBuffer(sec) {
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   return b;
 }
-function boom(delaySec) {
-  if (muted || !ac) return;
-  const t0 = ac.currentTime + delaySec;
-  // whistle up
-  const o = ac.createOscillator(), og = ac.createGain();
-  o.type = 'sine'; o.frequency.setValueAtTime(700, ac.currentTime); o.frequency.exponentialRampToValueAtTime(2400, t0);
-  og.gain.setValueAtTime(0.0001, ac.currentTime); og.gain.exponentialRampToValueAtTime(0.04, ac.currentTime + 0.1); og.gain.exponentialRampToValueAtTime(0.0001, t0);
-  o.connect(og).connect(ac.destination); o.start(); o.stop(t0 + 0.05);
-  // bang
-  const n = ac.createBufferSource(); n.buffer = noiseBuffer(1.6);
-  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(1800, t0); lp.frequency.exponentialRampToValueAtTime(120, t0 + 1.2);
-  const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.8, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.5);
-  n.connect(lp).connect(g).connect(ac.destination); n.start(t0);
-  // crackle
-  const cr = ac.createBufferSource(); cr.buffer = noiseBuffer(1.2);
-  const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000;
-  const cg = ac.createGain(); cg.gain.setValueAtTime(0.0001, t0 + 0.25);
-  for (let i = 0; i < 14; i++) { const tt = t0 + 0.3 + i * rand(0.04, 0.09); cg.gain.setValueAtTime(rand(0.05, 0.18), tt); cg.gain.setValueAtTime(0.0001, tt + 0.015); }
-  cr.connect(hp).connect(cg).connect(ac.destination); cr.start(t0 + 0.25);
+const soundOn = () => !muted && ac && ac.state === 'running' && !document.hidden;
+function out(vol, send) {
+  const g = ac.createGain(); g.gain.value = vol;
+  g.connect(master);
+  if (send) { const s = ac.createGain(); s.gain.value = send; g.connect(s).connect(reverbIn); }
+  return g;
+}
+let recentBooms = [];
+function playWhistle(dur, vol) {
+  if (!soundOn() || !SFX.whistle) return;
+  const t0 = ac.currentTime;
+  const src = ac.createBufferSource(); src.buffer = SFX.whistle;
+  src.playbackRate.value = rand(0.92, 1.12);
+  const g = out(0, 0.25);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.5 * vol, t0 + 0.12);
+  g.gain.setValueAtTime(0.5 * vol, t0 + Math.max(0.15, dur - 0.08));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.02);
+  src.connect(g); src.start(t0, rand(0, 0.25), dur + 0.1);
+}
+function playBoom(vol, type) {
+  if (!soundOn()) return;
+  const now = ac.currentTime;
+  recentBooms = recentBooms.filter((t) => now - t < 1);
+  if (recentBooms.length >= 5 && vol < 0.5) return; // don't turn a busy sky into noise
+  recentBooms.push(now);
+  const t0 = now + (vol < 0.5 ? rand(0.05, 0.35) : 0); // far bursts arrive a little late, like real sound
+  const buf = SFX[pick(['boom1', 'boom2', 'boom3'])];
+  if (buf) {
+    const src = ac.createBufferSource(); src.buffer = buf;
+    src.playbackRate.value = rand(0.8, 1.05);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.value = vol < 0.5 ? 2500 : 12000; // distance takes the edge off
+    src.connect(lp).connect(out(vol, 0.7)); src.start(t0);
+  }
+  // chest thump under the crack
+  const o = ac.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(90, t0); o.frequency.exponentialRampToValueAtTime(38, t0 + 0.5);
+  const og = out(0, 0.3);
+  og.gain.setValueAtTime(0.0001, t0); og.gain.exponentialRampToValueAtTime(0.7 * vol, t0 + 0.012); og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
+  o.connect(og); o.start(t0); o.stop(t0 + 0.75);
+  if (!buf) { // recordings not loaded yet: synthesized fallback
+    const n = ac.createBufferSource(); n.buffer = noiseBuffer(1.4);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(1800, t0); lp.frequency.exponentialRampToValueAtTime(120, t0 + 1.1);
+    const g = out(0, 0.6); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.6 * vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
+    n.connect(lp).connect(g); n.start(t0);
+  }
+  if (type === 'glitter' || type === 'willow' || type === 'double') { // crackling tail
+    const cr = ac.createBufferSource(); cr.buffer = noiseBuffer(1.6);
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
+    const cg = out(0, 0.4); cg.gain.setValueAtTime(0, t0);
+    for (let i = 0, tt = t0 + 0.35; i < 26; i++, tt += rand(0.025, 0.07)) { cg.gain.setValueAtTime(rand(0.08, 0.3) * vol, tt); cg.gain.setValueAtTime(0, tt + 0.012); }
+    cr.connect(hp).connect(cg); cr.start(t0 + 0.3);
+  }
 }
 function chime() {
   if (muted || !ac) return;
@@ -817,4 +927,4 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) last
 intro();
 
 // Debug hook for automated checks
-window.__dg = { cities, totals, launch, get me() { return me; }, altitude };
+window.__dg = { globe, scene, cities, totals, launch, sfx: SFX, get ac() { return ac; }, get me() { return me; }, altitude };
