@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Diya Chain · Light a diya this Diwali</title>
-  <meta name="description" content="Light a diya, add your Diwali wish, and watch the chain of lights grow with your friends.">
+  <title>Diwali Globe · Light up your city</title>
+  <meta name="description" content="Light a diya or burst a cracker above your city, and watch Diwali light up across India and the world, live.">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="🪔 Light a diya with me this Diwali">
-  <meta property="og:description" content="Add your light to the Diya Chain. Every friend who joins makes it glow brighter.">
+  <meta property="og:title" content="🪔 Light up your city this Diwali">
+  <meta property="og:description" content="Light a diya or burst a cracker above your city and watch the whole world celebrate, live.">
   <meta property="og:image" content="https://voideepak.github.io/diwali/og.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#0b0620">
+  <meta name="theme-color" content="#05020f">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪔</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,77 +18,52 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="sky" aria-label="A glowing mandala of diyas lit by everyone in this chain"></canvas>
+  <div id="globe"></div>
 
   <header id="header">
     <div class="topbar">
-      <a class="brand" href="./" title="Back to everyone's chain">
-        <span class="dot" id="netDot"></span>🪔 Diya Chain<span class="circle-name" id="circleName"></span>
-      </a>
-      <div class="top-actions">
-        <button class="pill-btn" id="newCircleBtn" type="button">＋ Circle</button>
-        <button class="pill-btn" id="wishesBtn" type="button">📜 Wishes</button>
-      </div>
+      <span class="brand"><span class="dot" id="netDot" title="Network"></span>🪔 Diwali Globe</span>
+      <button class="pill-btn" id="muteBtn" type="button" aria-label="Toggle sound">🔊</button>
     </div>
     <h1>Shubh Deepavali</h1>
-    <p class="count"><b id="count">0</b> <span id="countLabel">diyas glowing</span></p>
+    <p class="stats" id="stats"><span>🪔 <b id="diyaCount">0</b> <span id="diyaLabel">diyas</span></span><span>🎆 <b id="crackerCount">0</b> <span id="crackerLabel">crackers</span></span><span>📍 <b id="cityCount">0</b> <span id="cityLabel">cities</span></span></p>
   </header>
 
-  <section class="panel" id="panel" aria-live="polite">
-    <form id="lightForm" autocomplete="off">
-      <h2>Add your light to the chain</h2>
-      <input id="nameInput" maxlength="24" placeholder="Your name" required>
-      <input id="wishInput" maxlength="100" placeholder="Your Diwali wish (optional)">
-      <div class="swatch-row" role="radiogroup" aria-label="Diya colour" id="swatches"></div>
-      <button class="primary" type="submit" id="lightBtn">Light my diya 🪔</button>
-    </form>
+  <div class="intro" id="intro">
+    <p id="introText">Finding your city…</p>
+  </div>
 
-    <div id="litView" hidden>
-      <h2 id="litTitle">✨ Your diya is glowing!</h2>
-      <p class="sub">Pass the flame. Every friend who joins makes the chain brighter.</p>
-      <div class="row">
-        <a class="primary share" id="waBtn" target="_blank" rel="noopener">WhatsApp 💬</a>
-        <button class="ghost" id="copyBtn" type="button">Copy link</button>
-      </div>
-      <div class="row small-links">
-        <button class="link" id="againBtn" type="button">Light another diya</button>
-        <span>·</span>
-        <button class="link" id="circleLink" type="button">Start a friends circle</button>
-      </div>
+  <nav class="cam" aria-label="Camera">
+    <button type="button" id="camMe" title="My city">📍</button>
+    <button type="button" id="camIndia" title="India">🇮🇳</button>
+    <button type="button" id="camWorld" title="Whole world">🌏</button>
+  </nav>
+
+  <section class="panel" id="panel">
+    <div class="loc">
+      <span id="locLabel">📍 Locating…</span>
+      <button class="link" id="locFix" type="button">Not right?</button>
+    </div>
+    <div class="fields">
+      <input id="nameInput" maxlength="24" placeholder="Your name" autocomplete="nickname">
+      <input id="wishInput" maxlength="100" placeholder="Diwali wish (optional)" autocomplete="off">
+    </div>
+    <div class="actions">
+      <button class="primary diya" id="diyaBtn" type="button">🪔 Light a diya</button>
+      <button class="primary cracker" id="crackerBtn" type="button">🎆 Burst a cracker</button>
+    </div>
+    <div class="share">
+      <span>Invite friends:</span>
+      <a class="link" id="waBtn" target="_blank" rel="noopener">WhatsApp</a>
+      <span>·</span>
+      <button class="link" id="copyBtn" type="button">Copy link</button>
     </div>
     <p class="warn" id="warn" hidden></p>
   </section>
 
-  <div class="tooltip" id="tooltip" hidden>
-    <div class="tt-name" id="ttName"></div>
-    <div class="tt-wish" id="ttWish"></div>
-    <div class="tt-time" id="ttTime"></div>
-  </div>
-
+  <div class="tooltip" id="tooltip" hidden></div>
   <div class="toasts" id="toasts"></div>
 
-  <aside class="drawer" id="drawer" aria-hidden="true">
-    <div class="drawer-head">
-      <h3>Wishes in this chain</h3>
-      <button class="pill-btn" id="closeDrawer" type="button" aria-label="Close">✕</button>
-    </div>
-    <ol class="wish-list" id="wishList"></ol>
-    <p class="drawer-foot" id="netStatus">Connecting…</p>
-  </aside>
-
-  <dialog id="circleDialog">
-    <form method="dialog" id="circleForm">
-      <h3>Start a friends circle</h3>
-      <p class="sub">Your own private chain with its own link. Only people who have the link can find it.</p>
-      <input id="circleInput" maxlength="30" placeholder="e.g. Sharma Family, College Gang" required>
-      <div class="row">
-        <button class="ghost" value="cancel" type="button" id="circleCancel">Cancel</button>
-        <button class="primary" type="submit">Create circle</button>
-      </div>
-    </form>
-  </dialog>
-
-  <script src="vendor/nostr.bundle.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
