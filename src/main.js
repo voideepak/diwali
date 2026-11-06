@@ -64,10 +64,9 @@ const myPub = getPublicKey(secret);
 // ============================================================
 const el = $('globe');
 const globe = new Globe(el, { rendererConfig: { antialias: true, alpha: false } })
-  .globeImageUrl('img/earth-dark.jpg')
   .backgroundImageUrl('img/night-sky.png')
-  .atmosphereColor('#ff9d4d')
-  .atmosphereAltitude(0.16)
+  .atmosphereColor('#5d7fc4')
+  .atmosphereAltitude(0.13)
   .showGraticules(false)
   .width(innerWidth)
   .height(innerHeight);
@@ -84,14 +83,8 @@ controls.minDistance = R * 1.08;
 controls.maxDistance = R * 5;
 globe.pointOfView({ lat: 18, lng: 40, altitude: 2.7 }, 0);
 
-// Dark globe: only the real city lights glow (a separate lights-only map), so diyas stand out
 const mat = globe.globeMaterial();
-mat.shininess = 2;
-mat.color = new THREE.Color(0x8a93a8);
-new THREE.TextureLoader().load('img/earth-lights.jpg', (t) => {
-  t.colorSpace = THREE.SRGBColorSpace;
-  mat.emissiveMap = t; mat.emissive = new THREE.Color(0xffb04a); mat.emissiveIntensity = 1.3; mat.needsUpdate = true;
-});
+mat.color = new THREE.Color(0x05080f); mat.shininess = 0; mat.specular = new THREE.Color(0x000000);
 
 const camDist = () => camera.position.length();
 const altitude = () => camDist() / R - 1;
@@ -286,81 +279,144 @@ function simulate() {
 
 function updatePointScale() {
   const h = renderer.domElement.height;
-  pMat.uniforms.uScale.value = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  dMat.uniforms.uScale.value = pMat.uniforms.uScale.value = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
 }
 
 // ============================================================
-// City markers (diyas on the globe)
+// Map: a blank night globe with just coastlines, borders and Indian states
 // ============================================================
-function diyaTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 160;
+const OCEAN = '#03050b', LAND = '#111a2e';
+function drawLand(geo) {
+  const W = Math.min(8192, renderer.capabilities.maxTextureSize || 4096), H = W / 2;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.translate(64, 112);
-  // bowl
-  const body = new Path2D();
-  body.moveTo(-50, 0);
-  body.bezierCurveTo(-46, 28, -20, 42, 0, 42);
-  body.bezierCurveTo(20, 42, 46, 28, 50, 0);
-  body.closePath();
-  const gr = g.createLinearGradient(0, 0, 0, 42);
-  gr.addColorStop(0, '#ff9a3c'); gr.addColorStop(1, '#8a2f05');
-  g.fillStyle = gr; g.fill(body);
-  g.fillStyle = '#ffe9a3';
-  for (let i = -3; i <= 3; i++) { g.beginPath(); g.arc(i * 12, 18 + (i * i) * 0.25, 2.6, 0, Math.PI * 2); g.fill(); }
-  g.fillStyle = '#3a1606';
-  g.beginPath(); g.ellipse(0, 0, 50, 10, 0, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#ffd977'; g.lineWidth = 3; g.stroke();
-  const oil = g.createRadialGradient(0, 0, 1, 0, 0, 42);
-  oil.addColorStop(0, 'rgba(255,200,90,0.9)'); oil.addColorStop(1, 'rgba(160,80,10,0.2)');
-  g.fillStyle = oil; g.beginPath(); g.ellipse(0, 1, 42, 7, 0, 0, Math.PI * 2); g.fill();
-  // flame
-  const f = new Path2D();
-  f.moveTo(0, -100);
-  f.bezierCurveTo(12, -66, 24, -38, 18, -14);
-  f.quadraticCurveTo(0, 6, -18, -14);
-  f.bezierCurveTo(-24, -38, -12, -66, 0, -100);
-  const fg = g.createRadialGradient(0, -22, 0, 0, -34, 70);
-  fg.addColorStop(0, '#fffbe6'); fg.addColorStop(0.3, '#ffe27a'); fg.addColorStop(0.6, '#ffa52e'); fg.addColorStop(1, 'rgba(255,70,0,0.6)');
-  g.fillStyle = fg; g.fill(f);
-  const core = g.createRadialGradient(0, -26, 0, 0, -26, 16);
-  core.addColorStop(0, 'rgba(255,255,255,0.95)'); core.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = core; g.beginPath(); g.ellipse(0, -26, 9, 18, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = OCEAN; g.fillRect(0, 0, W, H);
+  const X = (v) => ((v / 100 + 180) / 360) * W, Y = (v) => ((90 - v / 100) / 180) * H;
+  g.fillStyle = LAND;
+  for (const poly of geo.land) {
+    g.beginPath();
+    for (const ring of poly) {
+      for (let i = 0; i < ring.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, X(ring[i]), Y(ring[i + 1]));
+      g.closePath();
+    }
+    g.fill('evenodd');
+  }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const m = globe.globeMaterial();
+  m.map = t; m.color = new THREE.Color(0xffffff); m.needsUpdate = true;
 }
-function glowTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  gr.addColorStop(0, 'rgba(255,210,120,1)');
-  gr.addColorStop(0.2, 'rgba(255,160,60,0.55)');
-  gr.addColorStop(0.55, 'rgba(255,110,30,0.12)');
-  gr.addColorStop(1, 'rgba(255,90,20,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(c);
+function lineLayer(list, color, opacity, alt) {
+  const pts = [];
+  const r = R * (1 + alt);
+  for (const line of list) {
+    for (let i = 0; i + 3 < line.length; i += 2) {
+      for (const j of [i, i + 2]) {
+        const lat = (line[j + 1] / 100) * Math.PI / 180, lng = (line[j] / 100) * Math.PI / 180;
+        // same axes as globe.gl's getCoords
+        pts.push(r * Math.cos(lat) * Math.sin(lng), r * Math.sin(lat), r * Math.cos(lat) * Math.cos(lng));
+      }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const ls = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+  ls.renderOrder = 1;
+  scene.add(ls);
+  return ls;
 }
-const DIYA_TEX = diyaTexture();
-const GLOW_TEX = glowTexture();
+fetch('data/geo.json').then((r) => r.json()).then((geo) => {
+  drawLand(geo);
+  lineLayer(geo.coast, 0x8fa6cf, 0.55, 0.0008);
+  lineLayer(geo.borders, 0x9fb3d9, 0.42, 0.0009);
+  lineLayer(geo.states, 0x7f93b8, 0.22, 0.0008);
+}).catch(() => {});
 
-const cities = new Map(); // key -> cluster
+// ============================================================
+// Diyas: every diya ever lit is one small warm dot on the map
+// ============================================================
+let dotCap = 4096, dotN = 0;
+let dPos = new Float32Array(dotCap * 3), dSeed = new Float32Array(dotCap), dBorn = new Float32Array(dotCap);
+const dGeo = new THREE.BufferGeometry();
+const dMat = new THREE.ShaderMaterial({
+  uniforms: { uScale: { value: 800 }, uTime: { value: 0 } },
+  vertexShader: `
+    attribute float aSeed; attribute float aBorn;
+    uniform float uScale; uniform float uTime;
+    varying float vFlick; varying float vNew;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      float age = uTime - aBorn;
+      vNew = age < 3.0 ? 1.0 - age / 3.0 : 0.0;
+      vFlick = 0.85 + 0.1 * sin(uTime * 6.0 + aSeed * 40.0) + 0.05 * sin(uTime * 11.0 + aSeed * 90.0);
+      // a real-world-sized light (~25 km halo) that never shrinks below a few pixels
+      gl_PointSize = clamp(0.9 * uScale / -mv.z, 9.0, 48.0) * (1.0 + 2.0 * vNew);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    varying float vFlick; varying float vNew;
+    void main() {
+      float d = length(gl_PointCoord - 0.5) * 2.0;
+      if (d > 1.0) discard;
+      float core = exp(-d * d * 40.0);
+      float halo = exp(-d * d * 6.0) * 0.45;
+      vec3 col = mix(vec3(1.0, 0.55, 0.16), vec3(1.0, 0.93, 0.75), core);
+      float a = (core + halo) * vFlick;
+      gl_FragColor = vec4(col * a * (1.0 + vNew), 1.0);
+    }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+function bindDots() {
+  dGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3));
+  dGeo.setAttribute('aSeed', new THREE.BufferAttribute(dSeed, 1));
+  dGeo.setAttribute('aBorn', new THREE.BufferAttribute(dBorn, 1));
+}
+bindDots();
+dGeo.setDrawRange(0, 0);
+const dots = new THREE.Points(dGeo, dMat);
+dots.frustumCulled = false;
+dots.renderOrder = 5;
+scene.add(dots);
+
+// Stable pseudo-random from the event id, so everyone sees the same dot in the same place
+function hash01(s, salt) {
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 100000) / 100000;
+}
+function addDot(e, fresh) {
+  if (dotN >= dotCap) {
+    dotCap *= 2;
+    const grow = (a, n) => { const b = new Float32Array(dotCap * n); b.set(a); return b; };
+    dPos = grow(dPos, 3); dSeed = grow(dSeed, 1); dBorn = grow(dBorn, 1);
+    bindDots();
+  }
+  // scatter around the city (~1–25 km) so a busy city fills in like a real city at night
+  const ang = hash01(e.id, 1) * Math.PI * 2, rad = 0.02 + Math.pow(hash01(e.id, 2), 0.7) * 0.2;
+  const lat = e.lat + Math.sin(ang) * rad, lng = e.lng + (Math.cos(ang) * rad) / Math.max(0.3, Math.cos(e.lat * Math.PI / 180));
+  const p = globe.getCoords(lat, lng, 0.0012);
+  dPos.set([p.x, p.y, p.z], dotN * 3);
+  dSeed[dotN] = hash01(e.id, 3);
+  dBorn[dotN] = fresh ? performance.now() / 1000 : -10;
+  dotN++;
+  for (const k of ['position', 'aSeed', 'aBorn']) dGeo.attributes[k].needsUpdate = true;
+  dGeo.setDrawRange(0, dotN);
+  return { lat, lng };
+}
+
+const cities = new Map(); // key -> cluster (for hover, wishes and the leaderboard)
 function cityKey(city, cc, lat, lng) {
   return city ? (city.toLowerCase() + '|' + (cc || '')) : ('@' + Math.round(lat * 2) / 2 + ',' + Math.round(lng * 2) / 2);
 }
+// invisible hover target per city
+const HIT_GEO = new THREE.SphereGeometry(1, 8, 6);
+const HIT_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 function makeMarker(cluster) {
-  const group = new THREE.Group();
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true }));
-  const diya = new THREE.Sprite(new THREE.SpriteMaterial({ map: DIYA_TEX, depthWrite: false, transparent: true }));
-  diya.center.set(0.5, 0.12);
-  group.add(glow, diya);
-  group.userData = { glow, diya, phase: Math.random() * 10 };
-  cluster.obj = group;
-  return group;
+  const m = new THREE.Mesh(HIT_GEO, HIT_MAT);
+  cluster.obj = m;
+  return m;
 }
-
 globe
   .customThreeObject((d) => d.obj || makeMarker(d))
   .customThreeObjectUpdate((obj, d) => {
@@ -371,26 +427,11 @@ globe
   .onCustomLayerClick((d) => showTooltip(d, true));
 
 function updateCityMarkers(t) {
-  const dist = camDist() - R;
-  const base = clamp(dist / 60, 0.25, 4.5);
-  // Glows skip the depth test (it caused a dark patch), so hide those on the far side by hand
-  const cam = globe.camera().position, cl = cam.length(), horizon = R / cl;
-  for (const c of cities.values()) {
-    if (!c.obj) continue;
-    const { glow, diya, phase } = c.obj.userData;
-    const p = c.obj.position;
-    glow.visible = (p.x * cam.x + p.y * cam.y + p.z * cam.z) / (p.length() * cl || 1) > horizon - 0.02;
-    const flick = 1 + 0.08 * Math.sin(t * 7 + phase) + 0.05 * Math.sin(t * 13 + phase * 2);
-    const lit = Math.log2(1 + c.diyas); // more diyas -> the city glows bigger and brighter
-    const pop = c.popUntil && t < c.popUntil ? 1 + 0.6 * Math.sin(((c.popUntil - t) / 1.2) * Math.PI) : 1;
-    const s = base * (1 + lit * 0.25) * pop;
-    diya.visible = c.diyas > 0;
-    diya.scale.set(s * 1.6, s * 2.0 * (0.97 + 0.03 * flick), 1);
-    const gs = base * (c.diyas > 0 ? 4 + lit * 2.2 : 2.5) * pop * flick;
-    glow.scale.set(gs, gs, 1);
-    glow.material.opacity = (c.diyas > 0 ? Math.min(1, 0.6 + lit * 0.1) : 0.3) * flick;
-  }
+  dMat.uniforms.uTime.value = t;
+  const s = clamp((camDist() - R) / 40, 0.6, 6);
+  for (const c of cities.values()) if (c.obj) c.obj.scale.setScalar(s);
 }
+
 
 let cityListTimer = null;
 function refreshCities() {
@@ -407,14 +448,13 @@ function renderBoard() {
   const top = ranked.slice(0, 7);
   const myRank = myKey ? ranked.findIndex((c) => c.key === myKey) : -1;
   const max = top.length ? top[0].diyas : 1;
-  const medal = (i) => ['🥇', '🥈', '🥉'][i] || String(i + 1);
   const row = (c, i) => `<li class="${c.key === myKey ? 'me' : ''}" data-key="${escapeHtml(c.key)}">
-    <span class="rank">${medal(i)}</span>
-    <span class="name">${flag(c.cc)} ${escapeHtml(c.city || countryName(c.cc) || 'Somewhere')}</span>
-    <span class="n">🪔 ${c.diyas.toLocaleString()}</span>
-    <span class="bar" style="width:${Math.max(6, (c.diyas / max) * 100).toFixed(1)}%"></span></li>`;
+    <span class="rank">${String(i + 1).padStart(2, '0')}</span>
+    <span class="name">${escapeHtml(c.city || countryName(c.cc) || 'Somewhere')}${c.city && c.cc ? `<small>${escapeHtml(c.cc)}</small>` : ''}</span>
+    <span class="n">${c.diyas.toLocaleString()}</span>
+    <span class="bar" style="width:calc((100% - 50px) * ${Math.max(0.04, c.diyas / max).toFixed(3)})"></span></li>`;
   let html = top.map(row).join('');
-  if (myRank >= 7) html += `<li class="gap">⋯</li>` + row(ranked[myRank], myRank);
+  if (myRank >= 7) html += `<li class="gap">···</li>` + row(ranked[myRank], myRank);
   boardList.innerHTML = html;
   $('boardEmpty').hidden = ranked.length > 0;
 }
@@ -469,8 +509,11 @@ function ingest(ev, local = false) {
   }
   // running average keeps the marker centred on the city
   c.n++; c.lat += (e.lat - c.lat) / c.n; c.lng += (e.lng - c.lng) / c.n;
+  const live = local || (initialDone && !document.hidden && e.created >= loadTime - 30);
+  let spot = null;
   if (e.type === 'd') {
     c.diyas++; totals.diyas++;
+    spot = addDot(e, live);
     if (e.wish || e.name) { c.wishes.push(e); c.wishes.sort((a, b) => b.created - a.created); c.wishes.length = Math.min(c.wishes.length, 6); }
   } else {
     c.crackers++; totals.crackers++;
@@ -480,7 +523,6 @@ function ingest(ev, local = false) {
   refreshCities();
   updateStats();
 
-  const live = local || (initialDone && !document.hidden && e.created >= loadTime - 30);
   if (!live) return;
   const jl = e.lat + rand(-0.15, 0.15), jg = e.lng + rand(-0.15, 0.15);
   if (e.type === 'c') {
@@ -495,11 +537,10 @@ function ingest(ev, local = false) {
       if (Math.random() < 0.5) launch(jl + rand(-0.2, 0.2), jg + rand(-0.2, 0.2), { delay: rand(0.2, 0.6), snd: 0.2 });
     }
   } else {
-    c.popUntil = performance.now() / 1000 + 1.2;
-    const p = globe.getCoords(e.lat, e.lng, 0.006);
+    const p = globe.getCoords(spot.lat, spot.lng, 0.004);
     const pos = new THREE.Vector3(p.x, p.y, p.z);
-    sparkle(pos, pos.clone().normalize(), fxScale());
-    addRing(e.lat, e.lng);
+    sparkle(pos, pos.clone().normalize(), fxScale() * 0.6);
+    addRing(spot.lat, spot.lng);
   }
   if (!local && e.pub !== myPub) toast(e);
 }
@@ -513,7 +554,7 @@ function addRing(lat, lng) {
 }
 globe
   .ringColor(() => (t) => `rgba(255,190,90,${Math.max(0, 1 - t)})`)
-  .ringMaxRadius(3.5)
+  .ringMaxRadius(1.1)
   .ringPropagationSpeed(2.5)
   .ringRepeatPeriod(700)
   .ringAltitude(0.003);
@@ -621,7 +662,7 @@ function placeLabel(l) {
   if (!l) return 'Locating…';
   if (!l.city && !l.cc) return 'Somewhere on Earth';
   const country = countryName(l.cc);
-  return `${flag(l.cc)} ${[l.city, country].filter((x, i, a) => x && a.indexOf(x) === i).join(', ')}`;
+  return `${[l.city, country].filter((x, i, a) => x && a.indexOf(x) === i).join(', ')}`;
 }
 function setMe(l) {
   me = { ...l, lat: round1(l.lat), lng: round1(l.lng) };
@@ -632,11 +673,11 @@ function setMe(l) {
 
 $('locFix').addEventListener('click', async () => {
   if (!navigator.geolocation) { alert('Location is not available in this browser.'); return; }
-  $('locLabel').textContent = '📍 Asking for location…';
+  $('locLabel').textContent = 'Finding you…';
   try {
     setMe(await preciseLocation());
     flyToMe(1800);
-    toastText(`📍 Moved you to <b>${escapeHtml(me.city || 'your spot')}</b>. Only your city is shared, never your exact location.`);
+    toastText(`Moved you to <b>${escapeHtml(me.city || 'your spot')}</b>. Only your city is shared, never your exact location.`);
   } catch {
     $('locLabel').textContent = placeLabel(me);
     toastText('Could not get your location. Using your approximate city.');
@@ -656,7 +697,11 @@ function pullBack() {
   controls.autoRotate = false;
   if (altitude() < 1.0) globe.pointOfView({ lat: me.lat - 9, lng: me.lng, altitude: 1.25 }, 1500);
 }
-$('camMe').addEventListener('click', () => flyToMe(1500));
+function setView(id) { for (const b of document.querySelectorAll('.seg button')) b.classList.toggle('on', b.id === id); }
+renderer.domElement.addEventListener('pointerdown', () => setView(null));
+$('camMe').addEventListener('click', () => { flyToMe(1500); setView('camMe'); });
+$('camIndia').addEventListener('click', () => setView('camIndia'));
+$('camWorld').addEventListener('click', () => setView('camWorld'));
 $('camIndia').addEventListener('click', () => { controls.autoRotate = false; globe.pointOfView(INDIA, 1500); });
 $('camWorld').addEventListener('click', () => {
   globe.pointOfView({ lat: me ? me.lat : 20, lng: me ? me.lng : 60, altitude: 2.6 }, 1500);
@@ -672,7 +717,7 @@ async function intro() {
   const minSpin = reduceMotion ? 0 : 3200;
   await sleep(Math.max(0, minSpin - (performance.now() - started)));
   const label = me.city || countryName(me.cc) || 'your corner of the world';
-  $('introText').textContent = `✨ Diwali in ${label}…`;
+  $('introText').textContent = `Diwali in ${label}`;
   controls.autoRotate = false;
   if (reduceMotion) {
     globe.pointOfView({ lat: me.lat, lng: me.lng, altitude: 0.5 }, 0);
@@ -710,7 +755,7 @@ $('diyaBtn').addEventListener('click', () => {
   wishInput.value = '';
   pullBack();
   setTimeout(() => { ingest(ev, true); chime(); }, altitude() < 1.0 ? 900 : 100);
-  toastText(`🪔 Your diya is glowing in <b>${escapeHtml(me.city || 'your city')}</b>!`);
+  toastText(`Your diya is lit in <b>${escapeHtml(me.city || 'your city')}</b>. That new dot is you.`);
 });
 $('crackerBtn').addEventListener('click', () => {
   if (!me || !canAct(1200)) return;
@@ -740,8 +785,8 @@ function updateStats() {
 function toast(e) {
   const where = e.city || countryName(e.cc) || 'somewhere';
   const msg = e.type === 'd'
-    ? `🪔 <b>${escapeHtml(e.name)}</b> lit a diya in ${escapeHtml(where)}${e.wish ? ': “' + escapeHtml(e.wish) + '”' : ''}`
-    : `🎆 <b>${escapeHtml(e.name)}</b> burst a cracker in ${escapeHtml(where)}`;
+    ? `<b>${escapeHtml(e.name)}</b> lit a diya in ${escapeHtml(where)}${e.wish ? ': “' + escapeHtml(e.wish) + '”' : ''}`
+    : `<b>${escapeHtml(e.name)}</b> burst a cracker over ${escapeHtml(where)}`;
   toastText(msg);
 }
 function toastText(html) {
@@ -762,7 +807,7 @@ function showTooltip(c, pin = false) {
   if (!c) { if (!tipPinned) hideTooltip(); return; }
   tipPinned = pin;
   const where = [c.city, countryName(c.cc)].filter((x, i, a) => x && a.indexOf(x) === i).join(', ') || 'Somewhere';
-  let html = `<div class="city">${flag(c.cc)} ${escapeHtml(where)}</div><div class="counts">🪔 ${c.diyas} diya${c.diyas === 1 ? '' : 's'} · 🎆 ${c.crackers} cracker${c.crackers === 1 ? '' : 's'}</div>`;
+  let html = `<div class="city">${escapeHtml(where)}</div><div class="counts">${c.diyas} diya${c.diyas === 1 ? '' : 's'} · ${c.crackers} cracker${c.crackers === 1 ? '' : 's'}</div>`;
   for (const w of c.wishes.slice(0, 4)) html += `<div class="wish"><b>${escapeHtml(w.name)}</b>${w.wish ? ': ' + escapeHtml(w.wish) : ' lit a diya'}</div>`;
   tip.innerHTML = html;
   tip.hidden = false;
@@ -776,7 +821,7 @@ function placeTip() {
 }
 
 // Share
-const shareText = () => `🪔 Light up your city this Diwali! I just lit a diya${me && me.city ? ' in ' + me.city : ''}. Come burst a cracker above your city and watch the whole world glow ✨\n${shareUrl()}`;
+const shareText = () => `🪔 Every light on this globe is a diya someone lit for Diwali. I just added mine${me && me.city ? ' in ' + me.city : ''}. Come light yours and fill the map ✨\n${shareUrl()}`;
 $('waBtn').addEventListener('click', () => { $('waBtn').href = 'https://wa.me/?text=' + encodeURIComponent(shareText()); });
 $('waBtn').href = 'https://wa.me/?text=' + encodeURIComponent(shareText());
 $('copyBtn').addEventListener('click', async () => {
@@ -794,7 +839,8 @@ $('copyBtn').addEventListener('click', async () => {
 // ============================================================
 let muted = store.get('dg.muted', false);
 const muteBtn = $('muteBtn');
-const syncMute = () => { muteBtn.textContent = muted ? '🔇' : '🔊'; };
+const SPK = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/>';
+const syncMute = () => { muteBtn.innerHTML = SPK + (muted ? '<path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>' : '<path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>'); };
 syncMute();
 muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', muted); syncMute(); ensureAudio(); });
 let ac = null, master = null, reverbIn = null;
