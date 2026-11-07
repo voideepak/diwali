@@ -230,6 +230,10 @@ input.shake { animation: shake .35s; border-color: #e36b6b; }
   .board.open { display: block; }
   .board-toggle { display: grid; }
 }
+.credit { margin: -4px 0 -6px; text-align: center; font-size: 11px; color: var(--faint); letter-spacing: .02em; }
+.credit span { color: #ff6b81; }
+.credit a { color: var(--muted); text-decoration: none; }
+.credit a:hover, .credit a:focus-visible { color: var(--ink); text-decoration: underline; }
 @media (max-width: 620px) {
   header { flex-direction: column; padding: max(14px, env(safe-area-inset-top)) 14px 0; gap: 10px; }
   .tools { width: 100%; }
