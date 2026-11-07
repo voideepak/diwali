@@ -1321,7 +1321,11 @@ function placeTip() {
 }
 
 // Share
-const shareText = () => `🪔 Every light on this globe is a diya someone lit for Diwali. I just added mine${me && me.city ? ' in ' + me.city : ''}. Come light yours and fill the map ✨\n${shareUrl()}`;
+const shareText = () => {
+  const city = me && me.city ? me.city : '';
+  return `🪔 Happy Diwali! Every light on this globe is a diya someone lit for Diwali. I just added mine${city ? ' in ' + city : ''}. Come light yours and fill the map ✨\n\n`
+    + `🪔 दीपावली की हार्दिक शुभकामनाएँ! इस ग्लोब पर हर रोशनी किसी का जलाया हुआ दीया है। मैंने भी ${city ? city + ' से ' : ''}अपना दीया जलाया है। आप भी अपना दीया जलाइए और नक्शे को रोशन कीजिए ✨\n\n${shareUrl()}`;
+};
 $('waBtn').addEventListener('click', () => { $('waBtn').href = 'https://wa.me/?text=' + encodeURIComponent(shareText()); });
 $('waBtn').href = 'https://wa.me/?text=' + encodeURIComponent(shareText());
 $('copyBtn').addEventListener('click', async () => {
