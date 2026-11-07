@@ -24,6 +24,10 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 
 `node tools/seed.mjs` lights about 260 diyas across 52 cities (and a starting cracker count) so the map isn't empty on day one. They're signed by a dedicated key and shown openly as **Diwali Globe**. They never appear as a person or as live activity, and real wishes always show first in a city's tooltip. `--delete` removes them, `--resend` re-publishes them to a relay that missed them, and `--room=name` targets a private room. The key lives in `.seed-key`, which is git-ignored.
 
+Public relays prune bulk events from a brand-new key (nos.lol and nostr.mom dropped the whole seed within hours), so the signed seed events also ship with the site as `seed/<room>.json`. The page loads that file, verifies each signature like any relay event, and merges it with what the relays return. Seeding, `--resend` and `--delete` rewrite the file; commit it. `--resend --site-only` only rewrites the file.
+
+Add `?debug` to the URL to see relay, history, audio and GPU status on screen. This is useful on phones, which have no console; tap the box to copy it.
+
 ## Develop
 
 ```sh

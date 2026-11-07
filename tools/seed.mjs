@@ -4,12 +4,13 @@
 //   node tools/seed.mjs --dry      print what would be published
 //   node tools/seed.mjs --resend   publish the saved seed again, skipping what each relay already has
 //     --relays=wss://a,wss://b  only these relays    --gap=3000  ms between events (damus needs ~3000)
-//   node tools/seed.mjs --delete   ask relays to delete everything seeded earlier
+//   node tools/seed.mjs --delete   ask relays to delete everything seeded earlier (and empty seed/<room>.json)
+//   node tools/seed.mjs --resend --site-only   just rewrite seed/<room>.json from the saved events
 //
 // The page labels anything signed by the seed key as "Diwali Globe" and never
 // shows it as live activity. The secret key lives in .seed-key (git-ignored);
 // published events are kept in seed-events.json (git-ignored) for --resend and --delete.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 
 const room = (process.argv.find((a) => a.startsWith('--room=')) || '--room=world').slice(7);
@@ -22,6 +23,8 @@ const dry = process.argv.includes('--dry');
 const del = process.argv.includes('--delete');
 const resend = process.argv.includes('--resend');
 const SAVED = 'seed-events.' + room + '.json';
+const SITE = 'seed/' + room + '.json'; // served with the page
+const siteOnly = process.argv.includes('--site-only');
 const saved = existsSync(SAVED) ? JSON.parse(readFileSync(SAVED, 'utf8')) : [];
 const sk = Uint8Array.from(Buffer.from(readFileSync(new URL('../.seed-key', import.meta.url), 'utf8').trim(), 'hex'));
 console.log('seed pubkey', getPublicKey(sk), 'room', room);
@@ -88,6 +91,7 @@ if (resend) {
 const diyas = events.filter((e) => e.kind === 7462).length;
 console.log(`${events.length} events (${diyas} diyas)`);
 if (dry) { console.log(events.slice(0, 2), events.at(-1).content.slice(0, 200)); process.exit(0); }
+if (siteOnly) { mkdirSync('seed', { recursive: true }); writeFileSync(SITE, JSON.stringify(resend ? saved : [])); console.log('wrote', SITE); process.exit(0); }
 
 // Publish slowly, one event at a time: public relays rate-limit (and briefly ban) bulk senders.
 // On "rate-limited" back off and retry the same event; on "banned" give up on that relay.
@@ -95,8 +99,9 @@ const results = await Promise.all(RELAYS.map((url) => new Promise((done) => {
   const ws = new WebSocket(url);
   const res = { url, ok: 0, bad: 0, why: new Set() };
   let waiting = null;
-  const finish = () => { try { ws.close(); } catch {} done(res); };
-  ws.onerror = finish;
+  let ended = false;
+  const finish = () => { if (ended) return; ended = true; try { ws.close(); } catch {} done(res); };
+  ws.onerror = () => { res.why.add('could not connect'); finish(); };
   ws.onclose = () => done(res);
   const have = new Set();
   let listed;
@@ -134,4 +139,8 @@ for (const r of results) console.log(`${r.url.padEnd(28)} ok=${r.ok} rejected=${
 
 if (del) writeFileSync(SAVED, '[]');
 else if (!resend) { writeFileSync(SAVED, JSON.stringify(events)); console.log('saved to', SAVED); }
+// The site serves the seed too (relays prune bulk events from a new key): commit seed/<room>.json
+mkdirSync('seed', { recursive: true });
+writeFileSync(SITE, JSON.stringify(del ? [] : (resend ? saved : events).filter((e) => e.kind !== 5)));
+console.log('wrote', SITE, '(commit and push it)');
 process.exit(0);

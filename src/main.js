@@ -789,6 +789,7 @@ class Relay {
   constructor(url) {
     this.url = url; this.open = false; this.backoff = 1500; this.queue = [];
     this.reader = false;
+    this.got = 0; this.fails = 0; this.notes = []; // for ?debug
     this.pagers = { d: { until: null, pages: 0, done: false }, t: { until: null, pages: 0, done: false } };
     this.connect();
   }
@@ -804,6 +805,7 @@ class Relay {
     ws.onmessage = (m) => {
       let d; try { d = JSON.parse(m.data); } catch { return; }
       if (d[0] === 'EVENT') {
+        this.got++;
         const ev = d[2];
         const p = this.pagers[d[1]];
         if (p && ev && (p.oldest == null || ev.created_at < p.oldest)) p.oldest = ev.created_at;
@@ -812,11 +814,12 @@ class Relay {
       } else if (d[0] === 'EOSE') {
         if (this.pagers[d[1]]) this.nextPage(d[1]);
         if (d[1] === 'd' && ++eose === 1) setTimeout(() => { initialDone = true; }, 800);
-      } else if (d[0] === 'CLOSED' && this.pagers[d[1]]) {
-        this.pagers[d[1]].done = true;
+      } else if (d[0] === 'NOTICE' || d[0] === 'CLOSED') {
+        this.notes = [...this.notes.slice(-2), String(d[d.length - 1]).slice(0, 80)];
+        if (d[0] === 'CLOSED' && this.pagers[d[1]]) this.pagers[d[1]].done = true;
       } else if (d[0] === 'OK' && acks.has(d[1]) && d[2]) { acks.set(d[1], acks.get(d[1]) + 1); $('warn').hidden = true; }
     };
-    ws.onclose = () => { this.open = false; updateNet(); this.retry(); };
+    ws.onclose = () => { this.open = false; this.fails++; updateNet(); this.retry(); };
     ws.onerror = () => {};
   }
   req(id, filter) { if (this.open && this.ws.readyState === 1) this.ws.send(JSON.stringify(['REQ', id, filter])); }
@@ -1215,7 +1218,9 @@ function ensureAudio() {
       reverbIn = ac.createGain();
       reverbIn.connect(conv).connect(wet).connect(master);
     }
-    if (ac.state === 'suspended') ac.resume();
+    // 'interrupted' is iOS after a call or app switch
+    if (ac.state !== 'running') ac.resume().catch(() => {});
+    unmuteIOS();
     if (!sfxDecoding) {
       sfxDecoding = true;
       sfxFiles.forEach((n, i) => sfxBytes[i].then((buf) => buf && new Promise((ok, bad) => ac.decodeAudioData(buf.slice(0), ok, bad)))
@@ -1223,8 +1228,31 @@ function ensureAudio() {
     }
   } catch { ac = null; }
 }
-// sound starts working after the first tap or drag anywhere (browser autoplay rules)
-addEventListener('pointerdown', ensureAudio, { once: true });
+// Sound starts after a user gesture (autoplay rules). iOS only counts some events as
+// gestures (touchend, click), so try on each until the context is actually running.
+for (const t of ['pointerdown', 'touchend', 'click', 'keydown']) {
+  addEventListener(t, () => { if (!ac || ac.state !== 'running') ensureAudio(); }, { capture: true, passive: true });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ac && ac.state !== 'running') ac.resume().catch(() => {}); });
+// iPhones mute Web Audio when the ringer switch is on silent. Declaring this page as
+// media playback (like a video) lets the sound through; older iOS needs a silent
+// <audio> element played once during a tap to switch the audio session.
+let iosUnmuted = false;
+function unmuteIOS() {
+  if (iosUnmuted) return;
+  iosUnmuted = true;
+  try { if (navigator.audioSession) { navigator.audioSession.type = 'playback'; return; } } catch { /* fall through */ }
+  if (!/iP(hone|ad|od)|Macintosh.*Mobile/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) return;
+  try {
+    const n = 4410, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 44100, true); v.setUint32(28, 88200, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+    const el = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+    el.setAttribute('playsinline', ''); el.setAttribute('x-webkit-airplay', 'deny');
+    el.play().catch(() => { iosUnmuted = false; });
+  } catch { iosUnmuted = false; }
+}
 function impulse(sec) {
   const len = Math.floor(ac.sampleRate * sec), b = ac.createBuffer(2, len, ac.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
@@ -1357,6 +1385,35 @@ setInterval(checkVersion, 5 * 60 * 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
 
 // ============================================================
+// Diagnostics: add ?debug to the URL (handy on phones, which have no console).
+// Tap the box to copy its text.
+// ============================================================
+if (params.has('debug')) {
+  const errs = [];
+  addEventListener('error', (e) => errs.push(String(e.message).slice(0, 90)));
+  addEventListener('unhandledrejection', (e) => errs.push(String(e.reason).slice(0, 90)));
+  const box = document.createElement('pre');
+  box.style.cssText = 'position:fixed;left:8px;right:8px;top:42%;z-index:99;margin:0;padding:8px 10px;background:rgba(0,0,0,.85);color:#9fe;font:11px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;border-radius:8px;max-height:36vh;overflow:auto';
+  document.body.append(box);
+  box.addEventListener('click', () => navigator.clipboard?.writeText(box.textContent).then(() => { box.style.color = '#fe9'; }));
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'unknown';
+  setInterval(() => {
+    const lines = [
+      `v ${VERSION}  room ${room}  ${innerWidth}x${innerHeight}@${devicePixelRatio}`,
+      `diyas ${totals.diyas}  crackers ${totals.crackers}  cities ${cities.size}  queue ${inq.length}  rockets ${rockets.length}`,
+      `audio ${ac ? ac.state : 'not started'}  muted ${muted}  sfx ${Object.keys(SFX).join(',') || 'none'}  session ${navigator.audioSession ? navigator.audioSession.type : 'n/a'}`,
+      `gpu ${gpu}`,
+      ...relays.map((r) => `${r.open ? 'open ' : 'DOWN '}${r.reader ? 'R' : ' '} ${r.url.slice(6).padEnd(18)} got ${String(r.got).padStart(4)}  pages ${r.pagers.d.pages}${r.pagers.d.done ? '✓' : ''}  drops ${r.fails}${r.notes.length ? '  ' + r.notes.join(' | ') : ''}`),
+      ...(errs.length ? ['errors:', ...errs.slice(-5)] : []),
+      navigator.userAgent.replace(/Mozilla\/5.0 /, '').slice(0, 110),
+    ];
+    box.textContent = lines.join('\n');
+  }, 1000);
+}
+
+// ============================================================
 // Boot
 // ============================================================
 function onResize() {
@@ -1373,6 +1430,12 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(onResize);
 onResize();
 requestAnimationFrame(simulate);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) lastT = performance.now(); });
+// The seed ("Diwali Globe" diyas) also ships with the site, because public relays
+// prune bulk events from a new key. Same signed events, checked like any other.
+fetch(`seed/${room}.json`, { cache: 'no-cache' })
+  .then((r) => (r.ok ? r.json() : []))
+  .then((evs) => { if (Array.isArray(evs)) for (const e of evs) if (e && e.pubkey === SEED_PUB) enqueue(e); })
+  .catch(() => {});
 intro();
 
 // Debug hook for automated checks
