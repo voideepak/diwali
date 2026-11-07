@@ -31,3 +31,4 @@ python3 -m http.server 8765
 
 - Map data: [Natural Earth](https://www.naturalearthdata.com) (public domain), India point-of-view borders.
 - Firework sounds: the explosion is "Firework launch explosion" from GFX Sounds (gfxsounds.com); the whistle is from "Silvester fireworks from the street 01" by stephan, Wikimedia Commons (public domain).
+- Diya bell: "ghanta, leather mallet" by the_very_Real_Horst (freesound.org/s/274316), via Wikimedia Commons, CC0.

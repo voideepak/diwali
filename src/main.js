@@ -1121,7 +1121,7 @@ muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', 
 let ac = null, master = null, reverbIn = null;
 // Two real recordings: the whistle while the rocket climbs, then the launch-and-explosion clip for the bang
 const SFX = {};
-const sfxFiles = ['whistle', 'firework'];
+const sfxFiles = ['whistle', 'firework', 'bell'];
 const BANG = 2.52; // seconds into firework.mp3 where the shell explodes
 const sfxBytes = sfxFiles.map((n) => fetch(`sfx/${n}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
 let sfxDecoding = false;
@@ -1238,14 +1238,25 @@ function playBoom(vol, type, clip) {
     cr.connect(hp).connect(cg); cr.start(t0 + 0.3);
   }
 }
+// Lighting a diya: one soft strike of a real brass puja bell (ghanta)
 function chime() {
   if (muted || !ac) return;
   const t0 = ac.currentTime;
-  [[880, 0.16], [1320, 0.09], [1760, 0.05], [2640, 0.025]].forEach(([f, v], i) => {
+  if (SFX.bell) {
+    const src = ac.createBufferSource(), g = ac.createGain();
+    src.buffer = SFX.bell;
+    src.playbackRate.value = rand(0.95, 1.03); // no two strikes quite alike
+    g.gain.value = 0.7;
+    src.connect(g).connect(ac.destination);
+    src.start(t0);
+    return;
+  }
+  // fallback until the recording has loaded
+  [[880, 0.12], [1320, 0.06]].forEach(([f, v]) => {
     const o = ac.createOscillator(), g = ac.createGain();
     o.frequency.value = f;
-    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(v, t0 + 0.02 + i * 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.2);
-    o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + 2.3);
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(v, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.6);
+    o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + 1.7);
   });
 }
 
