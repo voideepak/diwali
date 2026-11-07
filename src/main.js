@@ -235,7 +235,7 @@ function simulate() {
   for (let i = rockets.length - 1; i >= 0; i--) {
     const r = rockets[i];
     if (r.delay > 0) { r.delay -= dt; continue; }
-    if (r.t === 0 && r.snd) r.clip = playFirework(r.fuse, r.snd);
+    if (r.t === 0 && r.snd) { playWhistle(r.fuse, r.snd); r.clip = playFirework(r.fuse, r.snd); }
     r.t += dt;
     r.pos.addScaledVector(r.n, r.speed * dt * (1.2 - r.t / r.fuse * 0.6));
     _g.set(0, 0, 0);
@@ -848,9 +848,9 @@ const syncMute = () => { muteBtn.innerHTML = SPK + (muted ? '<path d="M16 9.5l5 
 syncMute();
 muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', muted); syncMute(); ensureAudio(); });
 let ac = null, master = null, reverbIn = null;
-// One real recording: launch thump, the rocket's climb, then the explosion
+// Two real recordings: the whistle while the rocket climbs, then the launch-and-explosion clip for the bang
 const SFX = {};
-const sfxFiles = ['firework'];
+const sfxFiles = ['whistle', 'firework'];
 const BANG = 2.52; // seconds into firework.mp3 where the shell explodes
 const sfxBytes = sfxFiles.map((n) => fetch(`sfx/${n}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
 let sfxDecoding = false;
@@ -900,6 +900,29 @@ function out(vol, send) {
   return g;
 }
 let recentBooms = [];
+// Whistle while the rocket climbs: stretched to the climb, gliding up in pitch, cut at the bang
+let recentWhistles = [];
+function playWhistle(fuse, vol) {
+  if (!soundOn() || !SFX.whistle) return;
+  const t0 = ac.currentTime;
+  recentWhistles = recentWhistles.filter((t) => t0 - t < 1.5);
+  if (recentWhistles.length >= 3 && vol < 0.5) return;
+  recentWhistles.push(t0);
+  const len = SFX.whistle.duration - 0.05;
+  const rate = clamp(len / fuse, 0.8, 1.4) * rand(0.95, 1.05);
+  const src = ac.createBufferSource(); src.buffer = SFX.whistle;
+  src.playbackRate.setValueAtTime(rate * 0.9, t0);
+  src.playbackRate.linearRampToValueAtTime(rate * 1.1, t0 + fuse);
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = vol < 0.5 ? 3500 : 16000;
+  const peak = (vol < 0.5 ? 0.5 : 0.75) * vol;
+  const g = out(0, 0.25);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(peak, t0 + 0.1);
+  g.gain.setValueAtTime(peak, t0 + Math.max(0.12, fuse - 0.06));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + fuse + 0.02);
+  src.connect(lp).connect(g); src.start(t0); src.stop(t0 + fuse + 0.05);
+}
 // Play the recording so its explosion lands exactly when the rocket bursts on screen
 function playFirework(fuse, vol) {
   if (!soundOn() || !SFX.firework) return false;
