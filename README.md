@@ -19,6 +19,10 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 - Every incoming message's signature is checked in small time slices, so a big history or a flood fills in gradually instead of freezing the page.
 - When the sky is busy, the page launches a sample of rockets (cities in view and near you first), merges the rest into one volley per city, and summarises them in a single toast.
 
+## Seeding
+
+`node tools/seed.mjs` lights about 260 diyas across 52 cities (and a starting cracker count) so the map isn't empty on day one. They're signed by a dedicated key and shown openly as **Diwali Globe**. They never appear as a person or as live activity, and real wishes always show first in a city's tooltip. `--delete` removes them, `--resend` re-publishes them to a relay that missed them, and `--room=name` targets a private room. The key lives in `.seed-key`, which is git-ignored.
+
 ## Develop
 
 ```sh

@@ -13,6 +13,9 @@ const RELAYS = [
   'wss://relay.snort.social',
 ];
 const KIND = 7462;
+// Diyas we lit ourselves so the map isn't empty on day one. They are shown
+// openly as "Diwali Globe", never as a person, and never as live activity.
+const SEED_PUB = 'e71e1112f305b995f27be836891f5ced625b3f4359d25eb531085c3eb2645564';
 const params = new URLSearchParams(location.search);
 const room = (params.get('c') || 'world').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 48) || 'world';
 const TAG = 'diwali-globe:v1:' + room;
@@ -524,7 +527,7 @@ function parse(ev) {
   if (ev.kind === KIND_TALLY) {
     if (!ev.tags.some((t) => t[0] === 'd' && t[1] === TAG) || !Array.isArray(c.c)) return null;
     const rows = [];
-    for (const r of c.c.slice(0, 20)) {
+    for (const r of c.c.slice(0, ev.pubkey === SEED_PUB ? 120 : 20)) {
       const loc = r && okLoc(r);
       const n = Math.floor(Number(r && r.n));
       if (loc && n > 0) rows.push({ ...loc, n: Math.min(n, TALLY_CAP) });
@@ -536,7 +539,8 @@ function parse(ev) {
   if (!loc) return null;
   return {
     id: ev.id, pub: ev.pubkey, type: c.t, eph: ev.kind === KIND_LIVE,
-    name: clean(c.n, 24) || 'Someone',
+    seed: ev.pubkey === SEED_PUB,
+    name: ev.pubkey === SEED_PUB ? 'Diwali Globe' : clean(c.n, 24) || 'Someone',
     wish: clean(c.w, 100),
     ...loc,
     kind: CRACKER_TYPES.includes(c.k) ? c.k : null,
@@ -604,7 +608,13 @@ function ingest(ev, local = false) {
   if (e.type === 'd') {
     c.diyas++; totals.diyas++;
     spot = addDot(e, live);
-    if (e.wish || e.name) { c.wishes.push(e); c.wishes.sort((a, b) => b.created - a.created); c.wishes.length = Math.min(c.wishes.length, 6); }
+    if (e.seed ? e.wish : (e.wish || e.name)) {
+      // real people first; at most one line from the seed
+      c.wishes.push(e);
+      c.wishes.sort((a, b) => (a.seed - b.seed) || (b.created - a.created));
+      const firstSeed = c.wishes.findIndex((w) => w.seed);
+      c.wishes = c.wishes.filter((w, i) => !w.seed || i === firstSeed).slice(0, 6);
+    }
   } else if (e.eph) {
     const had = (contrib.get(e.pub) || new Map()).get(c.key) || 0;
     addCrackers(e.pub, c, e.x > 0 ? Math.min(e.x, TALLY_CAP) : had + 1);
@@ -615,7 +625,7 @@ function ingest(ev, local = false) {
 
   if (!live) return;
   if (local) { show(e, spot, c, true); return; }
-  if (e.pub === myPub) return;
+  if (e.pub === myPub || e.seed) return;
   showQ.push({ e, spot, c, at: performance.now() });
   noteToast(e, c);
 }
