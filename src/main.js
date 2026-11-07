@@ -1271,6 +1271,26 @@ function chime() {
 }
 
 // ============================================================
+// New version check: a tab left open keeps running old code, so look for a
+// newer deploy every few minutes. Reload quietly if nobody is looking,
+// otherwise offer a refresh.
+// ============================================================
+const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : 'dev';
+async function checkVersion() {
+  if (VERSION === 'dev') return;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    const { v } = await r.json();
+    if (!v || v === VERSION) return;
+    if (document.hidden) { location.reload(); return; }
+    $('update').hidden = false;
+  } catch { /* offline: try later */ }
+}
+$('updateBtn').addEventListener('click', () => location.reload());
+setInterval(checkVersion, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+
+// ============================================================
 // Boot
 // ============================================================
 function onResize() {

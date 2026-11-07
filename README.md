@@ -27,9 +27,11 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 
 ```sh
 npm install
-npm run build          # bundles src/main.js -> app.js (committed, since Pages has no build step)
+npm run build          # bundles src/main.js -> app.js and stamps a version on it (committed, since Pages has no build step)
 python3 -m http.server 8765
 ```
+
+Every build writes `version.json` and adds `?v=<version>` to the `app.js` and `style.css` links, so browsers never mix old cached code with a new page. Open tabs check `version.json` every 5 minutes and when you return to the tab. They reload quietly if the tab is hidden; otherwise they show a Refresh link.
 
 ## Credits
 
