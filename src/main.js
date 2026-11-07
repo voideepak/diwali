@@ -933,7 +933,7 @@ async function getJSON(url, ms = 4500) {
 }
 async function detectLocation() {
   const saved = store.get('dg.loc', null);
-  if (saved && Number.isFinite(saved.lat) && saved.src === 'gps') return saved;
+  if (saved && Number.isFinite(saved.lat) && (saved.src === 'gps' || saved.src === 'manual')) return saved;
   try {
     const d = await getJSON('https://get.geojs.io/v1/ip/geo.json');
     const lat = parseFloat(d.latitude), lng = parseFloat(d.longitude);
@@ -972,17 +972,70 @@ function setMe(l) {
   renderBoard();
 }
 
-function setLoc(text) { const b = $('locFix'); b.dataset.tip = text; b.setAttribute('aria-label', text + '. Click to use your exact location'); }
-$('locFix').addEventListener('click', async () => {
-  if (!navigator.geolocation) { alert('Location is not available in this browser.'); return; }
-  setLoc('Finding you…');
+function setLoc(text) {
+  const b = $('locFix'); b.dataset.tip = text; b.setAttribute('aria-label', text + '. Click to change your city');
+  $('locNow').innerHTML = `You are in <b>${escapeHtml(text)}</b>. Wrong place? Search for your city.`;
+}
+const locPop = $('locPop'), citySearch = $('citySearch'), cityResults = $('cityResults');
+function openLoc(open) {
+  locPop.hidden = !open;
+  $('locFix').setAttribute('aria-expanded', String(open));
+  if (open) { openStyle(false); citySearch.value = ''; showCities([]); setTimeout(() => citySearch.focus(), 0); }
+}
+$('locFix').addEventListener('click', () => openLoc(locPop.hidden));
+
+// City search: Open-Meteo geocoding (free, no key)
+let found = [], citySel = -1, cityTimer = 0, cityReq = 0;
+function showCities(list, note = '') {
+  found = list; citySel = list.length ? 0 : -1;
+  cityResults.innerHTML = note ? `<li class="note">${escapeHtml(note)}</li>`
+    : list.map((c, i) => `<li role="option" id="city${i}" data-i="${i}" aria-selected="${i === citySel}">${escapeHtml(c.city)}<small>${escapeHtml([c.admin, countryName(c.cc) || c.country].filter(Boolean).join(', '))}</small></li>`).join('');
+  citySearch.setAttribute('aria-expanded', String(list.length > 0));
+}
+function markCity(i) {
+  citySel = i;
+  cityResults.querySelectorAll('li[data-i]').forEach((li) => li.setAttribute('aria-selected', String(+li.dataset.i === i)));
+  cityResults.querySelector(`[data-i="${i}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+citySearch.addEventListener('input', () => {
+  clearTimeout(cityTimer);
+  const q = citySearch.value.trim();
+  if (q.length < 2) { showCities([]); return; }
+  cityTimer = setTimeout(async () => {
+    const req = ++cityReq;
+    try {
+      const d = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=10&language=en&format=json`);
+      if (req !== cityReq) return;
+      const list = (d.results || []).filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude) && /^(PPL|ADM)/.test(r.feature_code || 'PPL'))
+        .map((r) => ({ city: r.name, cc: (r.country_code || '').toUpperCase(), country: r.country || '', admin: r.admin1 && r.admin1 !== r.name ? r.admin1 : '', lat: r.latitude, lng: r.longitude }));
+      showCities(list.slice(0, 6), list.length ? '' : 'No city found. Try another spelling.');
+    } catch { if (req === cityReq) showCities([], 'Search is not available right now.'); }
+  }, 250);
+});
+citySearch.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!found.length) return;
+    e.preventDefault();
+    markCity((citySel + (e.key === 'ArrowDown' ? 1 : -1) + found.length) % found.length);
+  } else if (e.key === 'Enter' && citySel >= 0) { e.preventDefault(); pickCity(found[citySel]); }
+});
+cityResults.addEventListener('click', (e) => { const li = e.target.closest('li[data-i]'); if (li) pickCity(found[+li.dataset.i]); });
+function pickCity(c) {
+  setMe({ city: c.city, cc: c.cc, lat: c.lat, lng: c.lng, src: 'manual' });
+  openLoc(false);
+  flyToMe(1500);
+  toastText(`Moved you to <b>${escapeHtml(placeLabel(me))}</b>. Your diyas and crackers will light up here.`);
+}
+$('gpsBtn').addEventListener('click', async () => {
+  if (!navigator.geolocation) { showCities([], 'Location is not available in this browser.'); return; }
+  showCities([], 'Finding you…');
   try {
     setMe(await preciseLocation());
+    openLoc(false);
     flyToMe(1800);
     toastText(`Moved you to <b>${escapeHtml(me.city || 'your spot')}</b>. Only your city is shared, never your exact location.`);
   } catch {
-    setLoc(placeLabel(me));
-    toastText('Could not get your location. Using your approximate city.');
+    showCities([], 'Could not get your location. Search for your city instead.');
   }
 });
 
@@ -1104,9 +1157,12 @@ function syncLook() {
 syncLook();
 const stylePop = $('stylePop');
 function openStyle(open) { stylePop.hidden = !open; $('styleBtn').setAttribute('aria-expanded', String(open)); }
-$('styleBtn').addEventListener('click', () => openStyle(stylePop.hidden));
-addEventListener('pointerdown', (e) => { if (!stylePop.hidden && !e.target.closest('.pop-wrap')) openStyle(false); });
-addEventListener('keydown', (e) => { if (e.key === 'Escape') openStyle(false); });
+$('styleBtn').addEventListener('click', () => { if (stylePop.hidden) openLoc(false); openStyle(stylePop.hidden); });
+addEventListener('pointerdown', (e) => {
+  if (!stylePop.hidden && !stylePop.parentNode.contains(e.target)) openStyle(false);
+  if (!locPop.hidden && !locPop.parentNode.contains(e.target)) openLoc(false);
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape') { openStyle(false); openLoc(false); } });
 
 $('crackerBtn').addEventListener('click', () => {
   if (!me || !canAct(1200)) return;

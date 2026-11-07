@@ -4,7 +4,7 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 
 **Live:** https://voideepak.github.io/diwali/
 
-- Your city comes from a free IP lookup. Tap **Not right?** to use precise browser location. Only the city name and coordinates rounded to about 10 km are shared.
+- Your city comes from a free IP lookup. If it's wrong, tap the pin to search for your city (Open-Meteo geocoding, free and keyless) or use your exact browser location. A city you pick is remembered. Only the city name and coordinates rounded to about 10 km are shared.
 - Every diya is one small warm dot, and it stays lit for everyone who visits. The map starts dark and fills in as people light diyas, so busy cities glow like cities at night. The **Brightest cities** leaderboard ranks them live; click a city to fly there.
 - The controls are icons; hover (or focus) any of them to see what it does. Pick a cracker colour (or mixed) and a height (small, medium, large) from the swatch next to the cracker button. Your choice is remembered and sent with each cracker, so everyone sees the same colour and height.
 - Crackers whistle as the rocket climbs, then boom, timed so the bang lands exactly when the shell bursts on screen. Your own crackers are loud; other people's are softer and farther away.

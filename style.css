@@ -149,6 +149,20 @@ h1 em { font-style: italic; color: var(--amber-hi); }
 .sizes button { height: 40px; border: 0; border-radius: 8px; background: none; color: var(--muted); display: grid; place-items: center; }
 .sizes button:hover { color: var(--ink); background: rgba(255, 255, 255, .05); }
 .sizes button.on { color: var(--ink); background: rgba(255, 255, 255, .09); }
+.loc-pop { left: -6px; transform: none; width: 300px; max-width: calc(100vw - 32px); gap: 8px; }
+.loc-now { margin: 2px 4px 0; font-size: 12px; color: var(--muted); }
+.loc-now b { color: var(--ink); font-weight: 600; }
+.loc-search { display: flex; align-items: center; gap: 6px; position: relative; }
+.loc-search > svg { position: absolute; left: 11px; color: var(--faint); pointer-events: none; }
+.loc-search input { padding-left: 33px; }
+.loc-search .icon-btn { flex: none; background: rgba(255, 255, 255, .04); border-color: var(--hair); }
+.city-results { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+.city-results:empty { display: none; }
+.city-results li { padding: 8px 10px; border-radius: 8px; cursor: pointer; line-height: 1.3; }
+.city-results li small { display: block; color: var(--muted); font-size: 12px; }
+.city-results li:hover, .city-results li[aria-selected="true"] { background: rgba(255, 255, 255, .07); }
+.city-results li.note { cursor: default; color: var(--muted); font-size: 12px; }
+.city-results li.note:hover { background: none; }
 .fields { display: flex; gap: 8px; }
 .fields input:first-child { flex: 0 0 36%; }
 input {
