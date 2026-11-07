@@ -2,7 +2,8 @@
 //
 //   node tools/seed.mjs            publish the seed (diyas + cracker tally)
 //   node tools/seed.mjs --dry      print what would be published
-//   node tools/seed.mjs --resend   publish the saved seed again (e.g. to a relay that missed it)
+//   node tools/seed.mjs --resend   publish the saved seed again, skipping what each relay already has
+//     --relays=wss://a,wss://b  only these relays    --gap=3000  ms between events (damus needs ~3000)
 //   node tools/seed.mjs --delete   ask relays to delete everything seeded earlier
 //
 // The page labels anything signed by the seed key as "Diwali Globe" and never
@@ -13,7 +14,10 @@ import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 
 const room = (process.argv.find((a) => a.startsWith('--room=')) || '--room=world').slice(7);
 const TAG = 'diwali-globe:v1:' + room;
-const RELAYS = ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.snort.social', 'wss://relay.damus.io'];
+const arg = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || '').slice(name.length + 3);
+const RELAYS = arg('relays') ? arg('relays').split(',')
+  : ['wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://relay.snort.social', 'wss://relay.damus.io'];
+const GAP = Number(arg('gap')) || 300; // ms between events; damus needs much more (e.g. --gap=3000)
 const dry = process.argv.includes('--dry');
 const del = process.argv.includes('--delete');
 const resend = process.argv.includes('--resend');
@@ -85,19 +89,46 @@ const diyas = events.filter((e) => e.kind === 7462).length;
 console.log(`${events.length} events (${diyas} diyas)`);
 if (dry) { console.log(events.slice(0, 2), events.at(-1).content.slice(0, 200)); process.exit(0); }
 
-// Publish slowly: public relays rate-limit (and briefly ban) bulk senders.
+// Publish slowly, one event at a time: public relays rate-limit (and briefly ban) bulk senders.
+// On "rate-limited" back off and retry the same event; on "banned" give up on that relay.
 const results = await Promise.all(RELAYS.map((url) => new Promise((done) => {
   const ws = new WebSocket(url);
   const res = { url, ok: 0, bad: 0, why: new Set() };
-  const timeout = setTimeout(() => { try { ws.close(); } catch {} done(res); }, events.length * 400 + 20000);
-  ws.onerror = () => { clearTimeout(timeout); done(res); };
+  let waiting = null;
+  const finish = () => { try { ws.close(); } catch {} done(res); };
+  ws.onerror = finish;
+  ws.onclose = () => done(res);
+  const have = new Set();
+  let listed;
+  const listing = new Promise((r) => { listed = r; setTimeout(r, 10000); });
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
-    if (d[0] !== 'OK') return;
-    d[2] ? res.ok++ : (res.bad++, res.why.add(String(d[3]).slice(0, 60)));
-    if (res.ok + res.bad === events.length) { clearTimeout(timeout); ws.close(); done(res); }
+    if (d[0] === 'EVENT' && d[1] === 'have') have.add(d[2].id);
+    else if ((d[0] === 'EOSE' || d[0] === 'CLOSED') && d[1] === 'have') listed();
+    else if (d[0] === 'OK' && waiting && d[1] === waiting.id) { const w = waiting; waiting = null; w.resolve(d); }
   };
-  ws.onopen = async () => { for (const e of events) { ws.send(JSON.stringify(['EVENT', e])); await sleep(300); } };
+  const send = (e) => new Promise((resolve) => {
+    waiting = { id: e.id, resolve };
+    ws.send(JSON.stringify(['EVENT', e]));
+    setTimeout(() => { if (waiting?.id === e.id) { waiting = null; resolve(['OK', e.id, false, 'timeout']); } }, 15000);
+  });
+  ws.onopen = async () => {
+    // skip what this relay already has (cheap on retries; kind-5 deletes are always sent)
+    ws.send(JSON.stringify(['REQ', 'have', { ids: events.map((e) => e.id), limit: events.length }]));
+    await listing;
+    let gap = GAP;
+    for (let i = 0; i < events.length; i++) {
+      if (have.has(events[i].id)) { res.ok++; continue; }
+      const [, , ok, msg = ''] = await send(events[i]);
+      if (ok) { res.ok++; gap = Math.max(GAP, gap * 0.9); }
+      else if (/^banned/.test(msg)) { res.bad += events.length - i; res.why.add(msg.slice(0, 60)); break; }
+      else if (/rate-limit/.test(msg) && gap < 120000) { gap *= 2; console.log(`${url}: rate-limited at ${i}, slowing to ${gap} ms`); await sleep(gap * 5); i--; continue; }
+      else { res.bad++; res.why.add(msg.slice(0, 60)); }
+      if ((i + 1) % 50 === 0) console.log(`${url}: ${i + 1}/${events.length}`);
+      await sleep(gap);
+    }
+    finish();
+  };
 })));
 for (const r of results) console.log(`${r.url.padEnd(28)} ok=${r.ok} rejected=${r.bad} ${[...r.why].join(' | ')}`);
 
