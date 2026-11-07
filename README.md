@@ -6,7 +6,7 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 
 - Your city comes from a free IP lookup. Tap **Not right?** to use precise browser location. Only the city name and coordinates rounded to about 10 km are shared.
 - Every diya is one small warm dot, and it stays lit for everyone who visits. The map starts dark and fills in as people light diyas, so busy cities glow like cities at night. The **Brightest cities** leaderboard ranks them live; click a city to fly there.
-- Crackers make real sounds: a whistle as the rocket climbs, then the boom. Your own crackers are loud; other people's are softer and farther away.
+- Crackers make a real firework sound, timed so the bang lands exactly when the shell bursts on screen. Your own crackers are loud; other people's are softer and farther away.
 - Use **My city / India / World** to jump between your city, India and the whole world. Hover or tap a diya to read the wishes from that city.
 - Private room for family or friends: add `?c=<room-name>` to the link.
 - Static site on GitHub Pages: no server, no accounts, no cost. Events are small signed messages on free, open [Nostr](https://nostr.com) relays.
@@ -22,4 +22,4 @@ python3 -m http.server 8765
 ## Credits
 
 - Map data: [Natural Earth](https://www.naturalearthdata.com) (public domain), India point-of-view borders.
-- Firework sounds: "Silvester fireworks from the street 01" and "Fireworks piece" by stephan, Wikimedia Commons (public domain).
+- Firework sound: "Firework launch explosion" from GFX Sounds (gfxsounds.com).

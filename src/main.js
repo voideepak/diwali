@@ -235,7 +235,7 @@ function simulate() {
   for (let i = rockets.length - 1; i >= 0; i--) {
     const r = rockets[i];
     if (r.delay > 0) { r.delay -= dt; continue; }
-    if (r.t === 0 && r.snd >= 0.5) playWhistle(r.fuse, r.snd);
+    if (r.t === 0 && r.snd) r.clip = playFirework(r.fuse, r.snd);
     r.t += dt;
     r.pos.addScaledVector(r.n, r.speed * dt * (1.2 - r.t / r.fuse * 0.6));
     _g.set(0, 0, 0);
@@ -245,7 +245,7 @@ function simulate() {
     }
     if (r.t >= r.fuse) {
       explode(r.pos, r.n, r.type, r.scale, r.colA, r.colB);
-      if (r.snd) playBoom(r.snd, r.type);
+      if (r.snd) playBoom(r.snd, r.type, r.clip);
       rockets.splice(i, 1);
     }
   }
@@ -496,8 +496,11 @@ function parse(ev) {
   };
 }
 
+const pendingLocal = new Set(); // my own events, waiting for the camera to pull back
 function ingest(ev, local = false) {
   if (!ev || seen.has(ev.id)) return;
+  if (pendingLocal.has(ev.id) && !local) return; // relay echo beat us to it; the local copy plays the show
+  pendingLocal.delete(ev.id);
   const e = parse(ev);
   if (!e) return;
   seen.add(e.id);
@@ -529,7 +532,7 @@ function ingest(ev, local = false) {
     if (local) {
       // your own cracker is the hero: a bigger volley right above your city
       const s = Math.max(fxScale(), 1.5) * 1.8;
-      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: 1.6, snd: 1 });
+      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: BANG, snd: 1 });
       launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6 });
       launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7 });
     } else {
@@ -599,6 +602,7 @@ function publish(content) {
     content: JSON.stringify(content),
   }, secret);
   acks.set(ev.id, 0);
+  pendingLocal.add(ev.id);
   const msg = JSON.stringify(['EVENT', ev]);
   relays.forEach((r) => r.send(msg));
   setTimeout(() => {
@@ -844,9 +848,10 @@ const syncMute = () => { muteBtn.innerHTML = SPK + (muted ? '<path d="M16 9.5l5 
 syncMute();
 muteBtn.addEventListener('click', () => { muted = !muted; store.set('dg.muted', muted); syncMute(); ensureAudio(); });
 let ac = null, master = null, reverbIn = null;
-// Real recordings (public domain, Wikimedia Commons): a rocket whistle and three bursts
+// One real recording: launch thump, the rocket's climb, then the explosion
 const SFX = {};
-const sfxFiles = ['whistle', 'boom1', 'boom2', 'boom3'];
+const sfxFiles = ['firework'];
+const BANG = 2.52; // seconds into firework.mp3 where the shell explodes
 const sfxBytes = sfxFiles.map((n) => fetch(`sfx/${n}.mp3`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
 let sfxDecoding = false;
 function ensureAudio() {
@@ -895,50 +900,47 @@ function out(vol, send) {
   return g;
 }
 let recentBooms = [];
-function playWhistle(dur, vol) {
-  if (!soundOn() || !SFX.whistle) return;
-  const t0 = ac.currentTime;
-  const src = ac.createBufferSource(); src.buffer = SFX.whistle;
-  src.playbackRate.value = rand(0.92, 1.12);
-  const g = out(0, 0.25);
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.5 * vol, t0 + 0.12);
-  g.gain.setValueAtTime(0.5 * vol, t0 + Math.max(0.15, dur - 0.08));
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.02);
-  src.connect(g); src.start(t0, rand(0, 0.25), dur + 0.1);
-}
-function playBoom(vol, type) {
-  if (!soundOn()) return;
+// Play the recording so its explosion lands exactly when the rocket bursts on screen
+function playFirework(fuse, vol) {
+  if (!soundOn() || !SFX.firework) return false;
   const now = ac.currentTime;
-  recentBooms = recentBooms.filter((t) => now - t < 1);
-  if (recentBooms.length >= 5 && vol < 0.5) return; // don't turn a busy sky into noise
+  recentBooms = recentBooms.filter((t) => now - t < 1.5);
+  if (recentBooms.length >= 4 && vol < 0.5) return true; // busy sky: skip quiet ones, no fallback either
   recentBooms.push(now);
-  const t0 = now + (vol < 0.5 ? rand(0.05, 0.35) : 0); // far bursts arrive a little late, like real sound
-  const buf = SFX[pick(['boom1', 'boom2', 'boom3'])];
-  if (buf) {
-    const src = ac.createBufferSource(); src.buffer = buf;
-    src.playbackRate.value = rand(0.8, 1.05);
-    const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.value = vol < 0.5 ? 2500 : 12000; // distance takes the edge off
-    src.connect(lp).connect(out(vol, 0.7)); src.start(t0);
-  }
-  // chest thump under the crack
-  const o = ac.createOscillator(); o.type = 'sine';
-  o.frequency.setValueAtTime(90, t0); o.frequency.exponentialRampToValueAtTime(38, t0 + 0.5);
-  const og = out(0, 0.3);
-  og.gain.setValueAtTime(0.0001, t0); og.gain.exponentialRampToValueAtTime(0.7 * vol, t0 + 0.012); og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
-  o.connect(og); o.start(t0); o.stop(t0 + 0.75);
-  if (!buf) { // recordings not loaded yet: synthesized fallback
+  const rate = rand(0.94, 1.06); // small pitch/tempo variety per rocket
+  const offset = Math.max(0, BANG - fuse * rate);
+  const src = ac.createBufferSource(); src.buffer = SFX.firework;
+  src.playbackRate.value = rate;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = vol < 0.5 ? 2200 : 16000; // distance takes the edge off
+  const g = out(0, vol < 0.5 ? 0.6 : 0.35);
+  if (offset > 0) { g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(vol, now + 0.08); }
+  else g.gain.setValueAtTime(vol, now);
+  src.connect(lp).connect(g); src.start(now, offset);
+  return true;
+}
+function playBoom(vol, type, clip) {
+  if (!soundOn()) return;
+  const t0 = ac.currentTime;
+  if (!clip) { // recording not loaded yet: synthesized thump + bang
+    if (vol < 0.5 && recentBooms.filter((t) => t0 - t < 1).length >= 4) return;
+    recentBooms.push(t0);
+    const o = ac.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(90, t0); o.frequency.exponentialRampToValueAtTime(38, t0 + 0.5);
+    const og = out(0, 0.3);
+    og.gain.setValueAtTime(0.0001, t0); og.gain.exponentialRampToValueAtTime(0.7 * vol, t0 + 0.012); og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
+    o.connect(og); o.start(t0); o.stop(t0 + 0.75);
     const n = ac.createBufferSource(); n.buffer = noiseBuffer(1.4);
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(1800, t0); lp.frequency.exponentialRampToValueAtTime(120, t0 + 1.1);
     const g = out(0, 0.6); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.6 * vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
     n.connect(lp).connect(g); n.start(t0);
   }
-  if (type === 'glitter' || type === 'willow' || type === 'double') { // crackling tail
+  // glittering shells get a crackling tail on top (only your own, close by)
+  if (vol >= 0.5 && (type === 'glitter' || type === 'willow' || type === 'double')) {
     const cr = ac.createBufferSource(); cr.buffer = noiseBuffer(1.6);
     const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
     const cg = out(0, 0.4); cg.gain.setValueAtTime(0, t0);
-    for (let i = 0, tt = t0 + 0.35; i < 26; i++, tt += rand(0.025, 0.07)) { cg.gain.setValueAtTime(rand(0.08, 0.3) * vol, tt); cg.gain.setValueAtTime(0, tt + 0.012); }
+    for (let i = 0, tt = t0 + 0.35; i < 26; i++, tt += rand(0.025, 0.07)) { cg.gain.setValueAtTime(rand(0.06, 0.22) * vol, tt); cg.gain.setValueAtTime(0, tt + 0.012); }
     cr.connect(hp).connect(cg); cr.start(t0 + 0.3);
   }
 }
@@ -973,4 +975,4 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) last
 intro();
 
 // Debug hook for automated checks
-window.__dg = { globe, scene, cities, totals, launch, sfx: SFX, get ac() { return ac; }, get me() { return me; }, altitude };
+window.__dg = { globe, scene, rockets, cities, totals, launch, sfx: SFX, get ac() { return ac; }, get me() { return me; }, altitude };
