@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import Globe from 'globe.gl';
-import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
+import { generateSecretKey, getPublicKey, finalizeEvent, verifyEvent } from 'nostr-tools/pure';
 
 // ============================================================
 // Config
@@ -204,6 +204,7 @@ function sparkle(pos, n, scale) {
 
 const rockets = [];
 function launch(lat, lng, opts = {}) {
+  if (!opts.force && rockets.length > 80) return; // sky is full; keep phones smooth
   const scale = opts.scale || fxScale();
   const start = globe.getCoords(lat, lng, 0.004);
   const n = new THREE.Vector3(start.x, start.y, start.z).normalize();
@@ -433,10 +434,20 @@ function updateCityMarkers(t) {
 }
 
 
+// Throttled (not debounced), so a steady stream of events still refreshes the UI
 let cityListTimer = null;
+let cracklePool = []; // cities weighted by crackers, for the ambient show
 function refreshCities() {
-  clearTimeout(cityListTimer);
-  cityListTimer = setTimeout(() => { globe.customLayerData([...cities.values()]); renderBoard(); }, 60);
+  if (cityListTimer) return;
+  cityListTimer = setTimeout(() => {
+    cityListTimer = null;
+    const all = [...cities.values()];
+    globe.customLayerData(all);
+    renderBoard();
+    updateStats();
+    cracklePool = all.filter((c) => c.crackers > 0).map((c) => ({ lat: c.lat, lng: c.lng, w: Math.sqrt(c.crackers) }));
+    cracklePool.total = cracklePool.reduce((s, c) => s + c.w, 0);
+  }, cities.size > 800 ? 600 : 150);
 }
 
 // Leaderboard: the cities glowing brightest (most diyas)
@@ -470,46 +481,122 @@ $('boardBtn').addEventListener('click', () => $('board').classList.toggle('open'
 
 // ============================================================
 // Events (Nostr)
+//
+// Three kinds of message, all tagged with the room:
+//   KIND        diya. Stored by relays; we page back through all of them.
+//   KIND_LIVE   cracker. Ephemeral: relays pass it on to whoever is
+//               listening but never store it, so crackers cannot crowd
+//               diyas out of history.
+//   KIND_TALLY  one replaceable message per person holding their running
+//               cracker count per city. Relays keep only the newest, so
+//               storage grows with people, not with crackers.
 // ============================================================
+const KIND_LIVE = 27462;
+const KIND_TALLY = 37462;
+const READERS = 3;          // listen to this many relays (write to all)
+const PAGE = 500;           // history page size
+const MAX_PAGES = 400;      // safety stop per relay (200k diyas)
+const TALLY_CAP = 5000;     // max crackers one person can claim per city
+const SKY_RPS = 6;          // remote rockets we launch per second, at most
+const FX_RPS = 5;           // remote diya sparkles per second, at most
+
 const seen = new Set();
-const crackerPool = []; // past crackers, replayed as ambient bursts
+let seenLive = new Set(), seenLiveOld = new Set(); // ephemeral ids, rotated so memory stays flat
+setInterval(() => { seenLiveOld = seenLive; seenLive = new Set(); }, 120000);
+const isSeen = (id) => seen.has(id) || seenLive.has(id) || seenLiveOld.has(id);
 let totals = { diyas: 0, crackers: 0 };
 let initialDone = false;
 const loadTime = Date.now() / 1000;
+const nowS = () => Math.floor(Date.now() / 1000);
 
-function parse(ev) {
-  if (!ev || ev.kind !== KIND || typeof ev.content !== 'string') return null;
-  if (!Array.isArray(ev.tags) || !ev.tags.some((t) => t[0] === 't' && t[1] === TAG)) return null;
-  let c; try { c = JSON.parse(ev.content); } catch { return null; }
-  if (!c || (c.t !== 'd' && c.t !== 'c')) return null;
+function okLoc(c) {
   const lat = Number(c.la), lng = Number(c.lo);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng, city: clean(c.city, 40), cc: /^[A-Z]{2}$/.test(c.cc) ? c.cc : '' };
+}
+function parse(ev) {
+  if (!ev || typeof ev.content !== 'string' || typeof ev.id !== 'string') return null;
+  if (ev.kind !== KIND && ev.kind !== KIND_LIVE && ev.kind !== KIND_TALLY) return null;
+  if (!Array.isArray(ev.tags) || !ev.tags.some((t) => t[0] === 't' && t[1] === TAG)) return null;
+  let c; try { c = JSON.parse(ev.content); } catch { return null; }
+  if (!c || typeof c !== 'object') return null;
+  const created = Math.min(ev.created_at | 0, nowS() + 60);
+  if (ev.kind === KIND_TALLY) {
+    if (!ev.tags.some((t) => t[0] === 'd' && t[1] === TAG) || !Array.isArray(c.c)) return null;
+    const rows = [];
+    for (const r of c.c.slice(0, 20)) {
+      const loc = r && okLoc(r);
+      const n = Math.floor(Number(r && r.n));
+      if (loc && n > 0) rows.push({ ...loc, n: Math.min(n, TALLY_CAP) });
+    }
+    return { id: ev.id, pub: ev.pubkey, type: 't', rows, created };
+  }
+  if (c.t !== 'd' && c.t !== 'c') return null;
+  const loc = okLoc(c);
+  if (!loc) return null;
   return {
-    id: ev.id, pub: ev.pubkey, type: c.t,
+    id: ev.id, pub: ev.pubkey, type: c.t, eph: ev.kind === KIND_LIVE,
     name: clean(c.n, 24) || 'Someone',
     wish: clean(c.w, 100),
-    city: clean(c.city, 40),
-    cc: /^[A-Z]{2}$/.test(c.cc) ? c.cc : '',
-    lat, lng,
+    ...loc,
     kind: CRACKER_TYPES.includes(c.k) ? c.k : null,
-    created: Math.min(ev.created_at | 0, Math.floor(Date.now() / 1000) + 60),
+    x: Math.floor(Number(c.x)) || 0,
+    created,
   };
 }
 
+function cityFor(loc) {
+  const key = cityKey(loc.city, loc.cc, loc.lat, loc.lng);
+  let c = cities.get(key);
+  if (!c) {
+    c = { key, city: loc.city, cc: loc.cc, lat: loc.lat, lng: loc.lng, diyas: 0, crackers: 0, wishes: [], n: 0 };
+    cities.set(key, c);
+  }
+  return c;
+}
+
+// Cracker counts: per person, per city, keep the highest running count we
+// have heard (from a live cracker or from their tally). Taking the max makes
+// it safe to hear the same thing from several relays, in any order.
+const contrib = new Map(); // pub -> Map(cityKey -> n)
+function addCrackers(pub, c, n) {
+  let m = contrib.get(pub);
+  if (!m) contrib.set(pub, (m = new Map()));
+  const old = m.get(c.key) || 0;
+  if (n <= old) return 0;
+  m.set(c.key, n);
+  c.crackers += n - old; totals.crackers += n - old;
+  return n - old;
+}
+
+// My own running counts, so the next cracker carries the right number
+const myCountsKey = 'dg.cx.' + room;
+const myCounts = store.get(myCountsKey, {});
+
 const pendingLocal = new Set(); // my own events, waiting for the camera to pull back
 function ingest(ev, local = false) {
-  if (!ev || seen.has(ev.id)) return;
+  if (!ev || isSeen(ev.id)) return;
   if (pendingLocal.has(ev.id) && !local) return; // relay echo beat us to it; the local copy plays the show
   pendingLocal.delete(ev.id);
   const e = parse(ev);
   if (!e) return;
-  seen.add(e.id);
-  const key = cityKey(e.city, e.cc, e.lat, e.lng);
-  let c = cities.get(key);
-  if (!c) {
-    c = { key, city: e.city, cc: e.cc, lat: e.lat, lng: e.lng, diyas: 0, crackers: 0, wishes: [], n: 0 };
-    cities.set(key, c);
+  (e.eph ? seenLive : seen).add(e.id);
+
+  if (e.type === 't') {
+    for (const r of e.rows) {
+      const c = cityFor(r);
+      addCrackers(e.pub, c, r.n);
+      if (e.pub === myPub) {
+        const mine = myCounts[c.key];
+        if (!mine || mine.n < r.n) myCounts[c.key] = { city: r.city, cc: r.cc, la: r.lat, lo: r.lng, n: r.n };
+      }
+    }
+    if (e.pub === myPub) store.set(myCountsKey, myCounts);
+    refreshCities();
+    return;
   }
+
+  const c = cityFor(e);
   // running average keeps the marker centred on the city
   c.n++; c.lat += (e.lat - c.lat) / c.n; c.lng += (e.lng - c.lng) / c.n;
   const live = local || (initialDone && !document.hidden && e.created >= loadTime - 30);
@@ -518,26 +605,50 @@ function ingest(ev, local = false) {
     c.diyas++; totals.diyas++;
     spot = addDot(e, live);
     if (e.wish || e.name) { c.wishes.push(e); c.wishes.sort((a, b) => b.created - a.created); c.wishes.length = Math.min(c.wishes.length, 6); }
+  } else if (e.eph) {
+    const had = (contrib.get(e.pub) || new Map()).get(c.key) || 0;
+    addCrackers(e.pub, c, e.x > 0 ? Math.min(e.x, TALLY_CAP) : had + 1);
   } else {
-    c.crackers++; totals.crackers++;
-    crackerPool.push(e);
-    if (crackerPool.length > 2000) crackerPool.shift();
+    c.crackers++; totals.crackers++; // older clients stored each cracker
   }
   refreshCities();
-  updateStats();
 
   if (!live) return;
+  if (local) { show(e, spot, c, true); return; }
+  if (e.pub === myPub) return;
+  showQ.push({ e, spot, c, at: performance.now() });
+  noteToast(e, c);
+}
+
+// ---------------------------------------------------------------
+// The show. When the world is busy we cannot launch every rocket, so we
+// launch a sample (cities you can see and cities near you first) and fold
+// the rest into one bigger volley per city.
+// ---------------------------------------------------------------
+const showQ = [];
+let skyTokens = SKY_RPS, fxTokens = FX_RPS;
+const _cv = new THREE.Vector3();
+function priority(it) {
+  _cv.copy(camera.position).normalize();
+  const p = globe.getCoords(it.c.lat, it.c.lng, 0);
+  const facing = (p.x * _cv.x + p.y * _cv.y + p.z * _cv.z) / R; // 1 = straight at you
+  let near = 0;
+  if (me) near = 1 / (1 + Math.hypot(it.c.lat - me.lat, it.c.lng - me.lng) / 10);
+  return (facing > 0.15 ? 2 + facing : facing) + near * 1.5 + Math.random() * 0.3;
+}
+function show(e, spot, c, local, volley = 1) {
   const jl = e.lat + rand(-0.15, 0.15), jg = e.lng + rand(-0.15, 0.15);
   if (e.type === 'c') {
     if (local) {
       // your own cracker is the hero: a bigger volley right above your city
       const s = Math.max(fxScale(), 1.5) * 1.8;
-      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: BANG, snd: 1 });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6 });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7 });
+      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: BANG, snd: 1, force: true });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6, force: true });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7, force: true });
     } else {
       launch(jl, jg, { type: e.kind || undefined, snd: 0.3 });
-      if (Math.random() < 0.5) launch(jl + rand(-0.2, 0.2), jg + rand(-0.2, 0.2), { delay: rand(0.2, 0.6), snd: 0.2 });
+      const extra = volley > 1 ? Math.min(volley - 1, 3) : (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < extra; i++) launch(jl + rand(-0.3, 0.3), jg + rand(-0.3, 0.3), { delay: rand(0.2, 0.9), snd: 0.2 });
     }
   } else {
     const p = globe.getCoords(spot.lat, spot.lng, 0.004);
@@ -545,13 +656,62 @@ function ingest(ev, local = false) {
     sparkle(pos, pos.clone().normalize(), fxScale() * 0.6);
     addRing(spot.lat, spot.lng);
   }
-  if (!local && e.pub !== myPub) toast(e);
 }
+let lastRemoteShow = 0;
+setInterval(() => {
+  skyTokens = Math.min(SKY_RPS, skyTokens + SKY_RPS / 5);
+  fxTokens = Math.min(FX_RPS, fxTokens + FX_RPS / 5);
+  const t = performance.now();
+  while (showQ.length && t - showQ[0].at > 2500) showQ.shift(); // too late to be "live"
+  if (!showQ.length || document.hidden) return;
+  const items = showQ.splice(0);
+  // merge crackers per city so a busy city gets one rich volley
+  const groups = new Map();
+  for (const it of items) {
+    if (it.e.type === 'd') {
+      if (fxTokens >= 1 && priority(it) > 1) { fxTokens--; show(it.e, it.spot, it.c, false); }
+      continue;
+    }
+    const g = groups.get(it.c.key);
+    if (g) g.n++; else groups.set(it.c.key, { ...it, n: 1 });
+  }
+  const ranked = [...groups.values()].map((g) => ({ g, p: priority(g) })).sort((a, b) => b.p - a.p);
+  const crowded = rockets.length > 40;
+  for (const { g } of ranked) {
+    const cost = Math.min(g.n, 4);
+    if (crowded || skyTokens < 1) break;
+    skyTokens -= cost;
+    show(g.e, g.spot, g.c, false, g.n);
+    lastRemoteShow = t;
+  }
+}, 200);
+
+// Toasts: one at a time; when it's busy, a summary instead of a flood
+let toastBuf = [];
+function noteToast(e, c) { toastBuf.push({ e, c }); }
+setInterval(() => {
+  if (!toastBuf.length || document.hidden) return;
+  const buf = toastBuf; toastBuf = [];
+  if (buf.length === 1) { toast(buf[0].e); return; }
+  const by = new Map();
+  for (const { e, c } of buf) {
+    const g = by.get(c.key) || { c, d: 0, k: 0 };
+    if (e.type === 'd') g.d++; else g.k++;
+    by.set(c.key, g);
+  }
+  const top = [...by.values()].sort((a, b) => (b.d + b.k) - (a.d + a.k))[0];
+  const where = top.c.city || countryName(top.c.cc) || 'Somewhere';
+  const parts = [];
+  if (top.d) parts.push(`${top.d} diya${top.d === 1 ? '' : 's'}`);
+  if (top.k) parts.push(`${top.k} cracker${top.k === 1 ? '' : 's'}`);
+  const more = by.size - 1;
+  toastText(`<b>${escapeHtml(where)}</b>: ${parts.join(' and ')} just now${more ? `, plus ${more} more cit${more === 1 ? 'y' : 'ies'}` : ''}`);
+}, 1800);
 
 let ringsArr = [];
 function addRing(lat, lng) {
   const r = { lat, lng, until: Date.now() + 3500 };
-  ringsArr = ringsArr.filter((x) => x.until > Date.now()).concat(r);
+  ringsArr = ringsArr.filter((x) => x.until > Date.now()).concat(r).slice(-12);
   globe.ringsData(ringsArr);
   setTimeout(() => { ringsArr = ringsArr.filter((x) => x.until > Date.now()); globe.ringsData(ringsArr); }, 3600);
 }
@@ -562,66 +722,177 @@ globe
   .ringRepeatPeriod(700)
   .ringAltitude(0.003);
 
+// ---------------------------------------------------------------
+// Inbound queue: check signatures without freezing the page. Work is done
+// in small time slices, so a big history or a flood just fills in gradually.
+// ---------------------------------------------------------------
+const inq = [];
+const queued = new Set();
+const lastLive = new Map(); // pub -> ms of their last live cracker we accepted
+let pumping = false;
+function enqueue(ev) {
+  if (!ev || typeof ev.id !== 'string' || isSeen(ev.id) || queued.has(ev.id)) return;
+  if (ev.kind === KIND_LIVE && inq.length > 3000) return; // drowning: a live cracker is just a show
+  queued.add(ev.id); inq.push(ev);
+  if (!pumping) { pumping = true; setTimeout(pump, 0); }
+}
+function pump() {
+  const budget = document.hidden ? 40 : 8;
+  const t0 = performance.now();
+  while (inq.length && performance.now() - t0 < budget) {
+    const ev = inq.shift();
+    queued.delete(ev.id);
+    if (isSeen(ev.id)) continue;
+    if (ev.kind === KIND_LIVE) {
+      const last = lastLive.get(ev.pubkey) || 0;
+      if (Date.now() - last < 900) continue; // faster than the button allows
+    }
+    if (!pendingLocal.has(ev.id) && !verifyEvent(ev)) continue;
+    if (ev.kind === KIND_LIVE) lastLive.set(ev.pubkey, Date.now());
+    ingest(ev);
+  }
+  if (inq.length) setTimeout(pump, 0); else pumping = false;
+}
+
+// ---------------------------------------------------------------
+// Relays. We write to all of them, but only listen to a few: every relay
+// sends the same messages, so listening to all five just multiplies the
+// download.
+// ---------------------------------------------------------------
 let eose = 0;
 const acks = new Map();
+let liveSince = nowS() - 60;
 class Relay {
-  constructor(url) { this.url = url; this.open = false; this.backoff = 1500; this.queue = []; this.connect(); }
+  constructor(url) {
+    this.url = url; this.open = false; this.backoff = 1500; this.queue = [];
+    this.reader = false;
+    this.pagers = { d: { until: null, pages: 0, done: false }, t: { until: null, pages: 0, done: false } };
+    this.connect();
+  }
   connect() {
     let ws;
     try { ws = new WebSocket(this.url); } catch { this.retry(); return; }
     this.ws = ws;
     ws.onopen = () => {
       this.open = true; this.backoff = 1500; updateNet();
-      ws.send(JSON.stringify(['REQ', 'dg', { kinds: [KIND], '#t': [TAG], limit: 3000 }]));
+      if (this.reader || relays.filter((r) => r.reader && r.open).length < READERS) this.listen();
       const q = this.queue; this.queue = []; q.forEach((m) => ws.send(m));
     };
     ws.onmessage = (m) => {
       let d; try { d = JSON.parse(m.data); } catch { return; }
-      if (d[0] === 'EVENT' && d[1] === 'dg') ingest(d[2]);
-      else if (d[0] === 'EOSE' && d[1] === 'dg') { eose++; if (eose === 1) setTimeout(() => { initialDone = true; }, 800); }
-      else if (d[0] === 'OK' && acks.has(d[1]) && d[2]) { acks.set(d[1], acks.get(d[1]) + 1); $('warn').hidden = true; }
+      if (d[0] === 'EVENT') {
+        const ev = d[2];
+        const p = this.pagers[d[1]];
+        if (p && ev && (p.oldest == null || ev.created_at < p.oldest)) p.oldest = ev.created_at;
+        if (p) p.got++;
+        enqueue(ev);
+      } else if (d[0] === 'EOSE') {
+        if (this.pagers[d[1]]) this.nextPage(d[1]);
+        if (d[1] === 'd' && ++eose === 1) setTimeout(() => { initialDone = true; }, 800);
+      } else if (d[0] === 'CLOSED' && this.pagers[d[1]]) {
+        this.pagers[d[1]].done = true;
+      } else if (d[0] === 'OK' && acks.has(d[1]) && d[2]) { acks.set(d[1], acks.get(d[1]) + 1); $('warn').hidden = true; }
     };
     ws.onclose = () => { this.open = false; updateNet(); this.retry(); };
     ws.onerror = () => {};
   }
+  req(id, filter) { if (this.open && this.ws.readyState === 1) this.ws.send(JSON.stringify(['REQ', id, filter])); }
+  listen() {
+    this.reader = true;
+    // live: new diyas, crackers and tallies from now on
+    this.req('live', { kinds: [KIND, KIND_LIVE, KIND_TALLY], '#t': [TAG], since: liveSince });
+    // history: page back through every diya and every tally
+    for (const id of ['d', 't']) if (!this.pagers[id].done) this.page(id);
+  }
+  page(id) {
+    const p = this.pagers[id];
+    p.got = 0; p.oldest = null;
+    const f = { kinds: [id === 'd' ? KIND : KIND_TALLY], '#t': [TAG], limit: PAGE };
+    if (p.until != null) f.until = p.until;
+    this.req(id, f);
+  }
+  nextPage(id) {
+    const p = this.pagers[id];
+    if (this.open) this.ws.send(JSON.stringify(['CLOSE', id]));
+    p.pages++;
+    // stop when a page brings nothing older than where we already are
+    if (!p.got || p.oldest == null || (p.until != null && p.oldest >= p.until && p.got < PAGE) || p.pages >= MAX_PAGES) { p.done = true; return; }
+    p.until = p.until != null && p.oldest >= p.until ? p.until - 1 : p.oldest;
+    this.page(id);
+  }
   retry() { setTimeout(() => this.connect(), this.backoff); this.backoff = Math.min(this.backoff * 2, 30000); }
   send(m) { if (this.open && this.ws.readyState === 1) this.ws.send(m); else this.queue.push(m); }
 }
-const relays = RELAYS.map((u) => new Relay(u));
+// shuffle so different visitors lean on different relays
+const relays = RELAYS.map((u) => [Math.random(), u]).sort((a, b) => a[0] - b[0]).map(([, u]) => new Relay(u));
 setTimeout(() => { initialDone = true; }, 5000);
+// if a relay we listen to drops, start listening to another one
+setInterval(() => {
+  liveSince = nowS() - 60;
+  const live = relays.filter((r) => r.reader && r.open).length;
+  if (live >= READERS) return;
+  const spare = relays.find((r) => r.open && !r.reader);
+  if (spare) spare.listen();
+}, 5000);
 
 function updateNet() {
   $('netDot').classList.toggle('on', relays.some((r) => r.open));
 }
 
-function publish(content) {
-  const ev = finalizeEvent({
-    kind: KIND,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [['t', TAG], ['client', 'diwali-globe']],
-    content: JSON.stringify(content),
-  }, secret);
-  acks.set(ev.id, 0);
-  pendingLocal.add(ev.id);
+function sign(kind, tags, content) {
+  return finalizeEvent({ kind, created_at: nowS(), tags: [['t', TAG], ...tags, ['client', 'diwali-globe']], content: JSON.stringify(content) }, secret);
+}
+function broadcast(ev, watch = true) {
   const msg = JSON.stringify(['EVENT', ev]);
   relays.forEach((r) => r.send(msg));
+  if (!watch) return;
+  acks.set(ev.id, 0);
   setTimeout(() => {
     if (acks.get(ev.id) === 0) {
       $('warn').textContent = 'Having trouble reaching the network. It will send once you are back online.';
       $('warn').hidden = false;
     }
   }, 9000);
+}
+function publish(content) {
+  let ev;
+  if (content.t === 'c') {
+    const key = cityKey(content.city, content.cc, content.la, content.lo);
+    const mine = myCounts[key] || { city: content.city, cc: content.cc, la: content.la, lo: content.lo, n: 0 };
+    mine.n = Math.min(mine.n + 1, TALLY_CAP);
+    myCounts[key] = mine;
+    store.set(myCountsKey, myCounts);
+    ev = sign(KIND_LIVE, [], { ...content, x: mine.n });
+    scheduleTally();
+  } else {
+    ev = sign(KIND, [], content);
+  }
+  pendingLocal.add(ev.id);
+  broadcast(ev);
   return ev;
 }
+// After a burst of clicks settles, store my running counts (one message, replaced each time)
+let tallyTimer = null;
+function scheduleTally() { clearTimeout(tallyTimer); tallyTimer = setTimeout(sendTally, 4000); }
+function sendTally() {
+  if (!tallyTimer) return;
+  tallyTimer = null;
+  const rows = Object.values(myCounts).sort((a, b) => b.n - a.n).slice(0, 20);
+  if (rows.length) broadcast(sign(KIND_TALLY, [['d', TAG]], { v: 1, c: rows }), false);
+}
+addEventListener('pagehide', sendTally);
+document.addEventListener('visibilitychange', () => { if (document.hidden) sendTally(); });
 
-// Ambient: replay real crackers people burst earlier, so the sky stays alive
+// Ambient: replay crackers in the cities that have burst the most, so the
+// sky stays alive. Stays quiet while real people are bursting crackers.
 (function ambient() {
-  if (!document.hidden && initialDone && crackerPool.length && !reduceMotion) {
-    const e = pick(crackerPool);
-    launch(e.lat + rand(-0.25, 0.25), e.lng + rand(-0.25, 0.25), { type: e.kind || undefined, snd: 0.12 });
+  const pool = cracklePool;
+  if (!document.hidden && initialDone && pool.length && !reduceMotion && performance.now() - lastRemoteShow > 4000) {
+    let r = Math.random() * pool.total, c = pool[0];
+    for (c of pool) if ((r -= c.w) <= 0) break;
+    launch(c.lat + rand(-0.25, 0.25), c.lng + rand(-0.25, 0.25), { snd: 0.12 });
   }
-  const busy = Math.min(crackerPool.length, 60);
-  setTimeout(ambient, rand(2600, 4200) - busy * 30);
+  setTimeout(ambient, rand(2600, 4200) - Math.min(pool.length, 40) * 30);
 })();
 
 // ============================================================
@@ -998,4 +1269,4 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) last
 intro();
 
 // Debug hook for automated checks
-window.__dg = { globe, scene, rockets, cities, totals, launch, sfx: SFX, get ac() { return ac; }, get me() { return me; }, altitude };
+window.__dg = { globe, scene, rockets, cities, totals, relays, contrib, showQ, inq, ingest, enqueue, launch, sfx: SFX, get ac() { return ac; }, get me() { return me; }, altitude };

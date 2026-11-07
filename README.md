@@ -11,6 +11,14 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 - Private room for family or friends: add `?c=<room-name>` to the link.
 - Static site on GitHub Pages: no server, no accounts, no cost. Events are small signed messages on free, open [Nostr](https://nostr.com) relays.
 
+## How it keeps up with a crowd
+
+- **Diyas** are stored by the relays. On load, the page pages back through all of them, 500 at a time, so the map and leaderboard count every diya.
+- **Crackers** are ephemeral: relays pass them to whoever is watching but never store them, so a flood of crackers can't push diyas out of history. Each person also keeps one replaceable "tally" message with their running cracker count per city, so totals survive without storing every cracker.
+- Each browser writes to all 5 relays but listens to only 3, chosen at random, which spreads the load.
+- Every incoming message's signature is checked in small time slices, so a big history or a flood fills in gradually instead of freezing the page.
+- When the sky is busy, the page launches a sample of rockets (cities in view and near you first), merges the rest into one volley per city, and summarises them in a single toast.
+
 ## Develop
 
 ```sh
