@@ -1178,15 +1178,26 @@ $('crackerBtn').addEventListener('click', () => {
   setTimeout(() => ingest(ev, true), wasClose ? 700 : 0);
 });
 
-// Your own cracker also bursts across your whole screen (a 2D overlay above everything,
-// never blocking taps). Others' crackers and the globe's bursts are unchanged.
+// Your own cracker also goes off across your whole screen: one rocket climbs from your city
+// on the globe and bursts big enough to fill the screen. A 2D overlay that never blocks taps;
+// others' crackers and the globe's bursts are unchanged.
 let fxCanvas = null, fxCtx = null, fxParts = [], fxShells = [], fxRaf = 0, fxLast = 0;
 function fxSize() {
   const d = Math.min(devicePixelRatio || 1, 2);
   fxCanvas.width = innerWidth * d; fxCanvas.height = innerHeight * d;
   fxCtx.setTransform(d, 0, 0, d, 0, 0);
 }
+function myScreenSpot() { // where your city is on screen right now (follows the camera)
+  const W = innerWidth, H = innerHeight;
+  try {
+    const p = globe.getScreenCoords(me.lat, me.lng, 0.01);
+    const r = globe.renderer().domElement.getBoundingClientRect();
+    if (Number.isFinite(p.x) && Number.isFinite(p.y)) return { x: Math.min(W - 8, Math.max(8, r.left + p.x)), y: Math.min(H - 8, Math.max(8, r.top + p.y)) };
+  } catch { /* fall through */ }
+  return { x: W / 2, y: H * 0.6 };
+}
 function screenBurst(col, h) {
+  if (!me) return;
   if (!fxCanvas) {
     fxCanvas = document.createElement('canvas');
     fxCanvas.setAttribute('aria-hidden', 'true');
@@ -1196,45 +1207,44 @@ function screenBurst(col, h) {
     addEventListener('resize', () => { if (fxRaf) fxSize(); });
   }
   fxSize();
-  const W = innerWidth, H = innerHeight;
-  const n = reduceMotion ? 1 : 3 + h; // more shells for bigger crackers
-  const top = [[0.42, 0.58], [0.24, 0.42], [0.1, 0.26]][h]; // where they burst, as a share of screen height
-  for (let i = 0; i < n; i++) {
-    const c = COLORS[col != null ? col : Math.floor(Math.random() * COLORS.length)];
-    const x = W * (n === 1 ? 0.5 : 0.15 + 0.7 * (i + Math.random() * 0.6) / n);
-    const y = H * (top[0] + Math.random() * (top[1] - top[0]));
-    fxShells.push({ x: x + (Math.random() - 0.5) * W * 0.08, y: H + 10, tx: x, ty: y, wait: i * 260 + Math.random() * 120, c, s: SPREAD[h] });
-  }
+  const c = col != null ? COLORS[col] : null; // null = mixed
+  fxShells.push({ t: 0, c, h, s: SPREAD[h], top: [0.42, 0.3, 0.2][h], px: null, py: null });
   if (!fxRaf) { fxLast = performance.now(); fxRaf = requestAnimationFrame(fxTick); }
 }
-function fxExplode(sh) {
-  const big = Math.min(innerWidth, innerHeight) * 0.42 * sh.s;
-  const count = reduceMotion ? 60 : 110;
+function fxExplode(sh, x, y) {
+  const W = innerWidth, H = innerHeight;
+  // far enough to reach the screen corners
+  const reach = Math.hypot(Math.max(x, W - x), Math.max(y, H - y)) * (0.7 + 0.15 * sh.h);
+  const count = reduceMotion ? 120 : 260;
   for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + Math.random() * 0.1;
-    const v = big * (0.55 + Math.random() * 0.45) * 1.6;
-    const c = tint(sh.c, Math.random() * 0.35);
-    fxParts.push({ x: sh.tx, y: sh.ty, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, decay: 0.45 + Math.random() * 0.35,
-      r: 1.4 + Math.random() * 1.6, col: `${c[0] * 255 | 0},${c[1] * 255 | 0},${c[2] * 255 | 0}`, tw: Math.random() < 0.3 });
+    const a = (i / count) * Math.PI * 2 + Math.random() * 0.05;
+    const v = reach * (0.75 + Math.random() * 0.25) * 2.2;
+    const base = sh.c || COLORS[Math.floor(Math.random() * COLORS.length)];
+    const c = tint(base, Math.random() * 0.35);
+    fxParts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, decay: 0.42 + Math.random() * 0.25,
+      r: 1.5 + Math.random() * 1.8, col: `${c[0] * 255 | 0},${c[1] * 255 | 0},${c[2] * 255 | 0}`, tw: Math.random() < 0.3 });
   }
-  fxParts.push({ flash: true, x: sh.tx, y: sh.ty, life: 1, decay: 4, r: big * 0.35, col: '255,240,215' });
+  fxParts.push({ flash: true, x, y, life: 1, decay: 3.5, r: Math.max(W, H) * 0.32, col: '255,240,215' });
 }
 function fxTick(now) {
   const dt = Math.min(0.05, (now - fxLast) / 1000); fxLast = now;
   const ctx = fxCtx, W = innerWidth, H = innerHeight;
   ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = 'rgba(0,0,0,0.22)'; // fade what was drawn: leaves short trails
+  ctx.fillStyle = 'rgba(0,0,0,0.16)'; // fade what was drawn: leaves short trails
   ctx.fillRect(0, 0, W, H);
   ctx.globalCompositeOperation = 'lighter';
   for (const sh of fxShells) {
-    if (sh.wait > 0) { sh.wait -= dt * 1000; continue; }
-    if (sh.t == null) { sh.t = 0; sh.x0 = sh.x; sh.y0 = sh.y; }
-    sh.t = Math.min(1, sh.t + dt / 0.6); // 0.6 s climb, easing out
-    const e = 1 - (1 - sh.t) ** 3;
-    sh.x = sh.x0 + (sh.tx - sh.x0) * e; sh.y = sh.y0 + (sh.ty - sh.y0) * e;
-    ctx.fillStyle = 'rgba(255,225,170,0.9)';
-    ctx.beginPath(); ctx.arc(sh.x, sh.y, 2.2, 0, 7); ctx.fill();
-    if (sh.t >= 1) { sh.done = true; fxExplode(sh); }
+    sh.t = Math.min(1, sh.t + dt / 0.9); // 0.9 s climb, easing out
+    const e = 1 - (1 - sh.t) ** 2.4;
+    const from = myScreenSpot();
+    const tx = from.x + (W / 2 - from.x) * 0.35, ty = H * sh.top;
+    const x = from.x + (tx - from.x) * e, y = from.y + (ty - from.y) * e;
+    ctx.strokeStyle = 'rgba(255,215,150,0.9)'; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(sh.px ?? from.x, sh.py ?? from.y); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,240,210,1)';
+    ctx.beginPath(); ctx.arc(x, y, 2.8, 0, 7); ctx.fill();
+    sh.px = x; sh.py = y;
+    if (sh.t >= 1) { sh.done = true; fxExplode(sh, x, y); }
   }
   fxShells = fxShells.filter((sh) => !sh.done);
   for (const p of fxParts) {
@@ -1242,7 +1252,7 @@ function fxTick(now) {
     if (p.life <= 0) continue;
     if (p.flash) {
       const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
-      g.addColorStop(0, `rgba(${p.col},${0.5 * p.life})`); g.addColorStop(1, `rgba(${p.col},0)`);
+      g.addColorStop(0, `rgba(${p.col},${(p.flash ? 0.3 : 0.5) * p.life})`); g.addColorStop(1, `rgba(${p.col},0)`);
       ctx.fillStyle = g; ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
       continue;
     }
