@@ -15,27 +15,31 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=069a81ecdc">
+  <link rel="stylesheet" href="style.css?v=e7a79191f4">
 </head>
 <body>
   <div id="globe"></div>
 
   <header id="header">
     <div class="title">
-      <p class="over"><span class="dot" id="netDot" title="Live"></span>Diwali · live map</p>
+      <p class="over"><span class="dot" id="netDot" data-tip="Live"></span>Diwali · live map</p>
       <h1>Shubh <em>Deepavali</em></h1>
-      <p class="stats" id="stats"><b id="diyaCount">0</b> <span id="diyaLabel">diyas</span><i></i><b id="crackerCount">0</b> <span id="crackerLabel">crackers</span><i></i><b id="cityCount">0</b> <span id="cityLabel">cities</span></p>
+      <p class="stats" id="stats">
+        <span class="stat" id="diyaStat" data-tip="Diyas lit"><span class="flame"></span><b id="diyaCount">0</b></span>
+        <span class="stat" id="crackerStat" data-tip="Crackers burst"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 13v3M5 9.5h3M16 9.5h3M7.2 4.7l2 2M14.8 12.3l2 2M16.8 4.7l-2 2M9.2 12.3l-2 2"/><path d="M12 19v2" opacity=".6"/></svg><b id="crackerCount">0</b></span>
+        <span class="stat" id="cityStat" data-tip="Cities"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V9l5-3v15M10 21V4l6 3v14M16 21v-9l3 1.5V21"/></svg><b id="cityCount">0</b></span>
+      </p>
     </div>
     <div class="tools">
       <div class="seg" role="group" aria-label="View">
-        <button type="button" id="camMe">My city</button>
-        <button type="button" id="camIndia">India</button>
-        <button type="button" id="camWorld">World</button>
+        <button type="button" id="camMe" aria-label="My city" data-tip="My city"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+        <button type="button" id="camIndia" aria-label="India" data-tip="India"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg></button>
+        <button type="button" id="camWorld" aria-label="World" data-tip="World"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
       </div>
-      <button class="icon-btn board-toggle" id="boardBtn" type="button" aria-label="Brightest cities" title="Brightest cities">
+      <button class="icon-btn board-toggle" id="boardBtn" type="button" aria-label="Brightest cities" data-tip="Brightest cities">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>
       </button>
-      <button class="icon-btn" id="muteBtn" type="button" aria-label="Toggle sound"></button>
+      <button class="icon-btn" id="muteBtn" type="button" aria-label="Sound" data-tip="Sound"></button>
     </div>
   </header>
 
@@ -50,22 +54,26 @@
   </aside>
 
   <section class="panel" id="panel">
-    <div class="loc">
-      <span id="locLabel">Locating…</span>
-      <button class="link" id="locFix" type="button">Not right?</button>
+    <div class="dock">
+      <button class="icon-btn" id="locFix" type="button" aria-label="Locating…" data-tip="Locating…"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg></button>
+      <button class="icon-btn" id="nameBtn" type="button" aria-label="Your name and wish" data-tip="Your name and wish"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>
+      <span class="sep"></span>
+      <button class="act diya" id="diyaBtn" type="button" aria-label="Light a diya" data-tip="Light a diya"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13.5h18c-1 4-4.5 6-9 6s-8-2-9-6z" fill="currentColor" stroke="none"/><path d="M12 3c2 2.5 2.6 4.3 2.6 5.6a2.6 2.6 0 0 1-5.2 0C9.4 7.3 10 5.5 12 3z" fill="currentColor" stroke="none"/></svg></button>
+      <button class="act cracker" id="crackerBtn" type="button" aria-label="Burst a cracker" data-tip="Burst a cracker"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5v2.5M12 12v2.5M5.5 8.5H8M16 8.5h2.5M7.4 3.9l1.8 1.8M14.8 11.3l1.8 1.8M16.6 3.9l-1.8 1.8M9.2 11.3l-1.8 1.8"/><path d="M12 17.5v1.2M12 20.5v1" opacity=".7"/></svg></button>
+      <div class="pop-wrap">
+        <button class="icon-btn" id="styleBtn" type="button" aria-label="Cracker colour and height" data-tip="Colour and height" aria-expanded="false"><span class="swatch" id="styleSwatch"></span></button>
+        <div class="pop" id="stylePop" hidden>
+          <div class="swatches" id="swatches" role="group" aria-label="Colour"></div>
+          <div class="sizes" role="group" aria-label="Height"><button type="button" class="size" data-h="0" aria-label="Small" data-tip="Small"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V18" stroke-dasharray="1.5 2.2"/><path d="M12 12.5v1.6M12 16v1.6M9 15h1.6M13.4 15H15M9.9 13l1 1M13.1 16l1 1M14.1 13l-1 1M10.9 16l-1 1"/></svg></button><button type="button" class="size" data-h="1" aria-label="Medium" data-tip="Medium"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V13" stroke-dasharray="1.5 2.2"/><path d="M12 7.5v1.6M12 11v1.6M9 10h1.6M13.4 10H15M9.9 8l1 1M13.1 11l1 1M14.1 8l-1 1M10.9 11l-1 1"/></svg></button><button type="button" class="size" data-h="2" aria-label="Large" data-tip="Large"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V8" stroke-dasharray="1.5 2.2"/><path d="M12 2.5v1.6M12 6v1.6M9 5h1.6M13.4 5H15M9.9 3l1 1M13.1 6l1 1M14.1 3l-1 1M10.9 6l-1 1"/></svg></button></div>
+        </div>
+      </div>
+      <span class="sep"></span>
+      <a class="icon-btn" id="waBtn" target="_blank" rel="noopener" aria-label="Share on WhatsApp" data-tip="Share on WhatsApp"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1.3-3.9A8 8 0 1 1 8 19z"/><path d="M9.5 9.5c0 2.5 2.5 5 5 5l1-1.5-1.8-.8-.8.8c-.8-.4-1.6-1.2-2-2l.8-.8-.8-1.8z" stroke-width="1.3"/></svg></a>
+      <button class="icon-btn" id="copyBtn" type="button" aria-label="Copy link" data-tip="Copy link"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
     </div>
-    <div class="fields">
-      <input id="nameInput" maxlength="24" placeholder="Your name" autocomplete="nickname">
-      <input id="wishInput" maxlength="100" placeholder="A wish for Diwali (optional)" autocomplete="off">
-    </div>
-    <div class="actions">
-      <button class="btn primary" id="diyaBtn" type="button"><span class="flame"></span>Light a diya</button>
-      <button class="btn ghost" id="crackerBtn" type="button">Burst a cracker</button>
-    </div>
-    <div class="share">
-      <span>Every dot is a diya someone lit. Bring your people:</span>
-      <a class="link" id="waBtn" target="_blank" rel="noopener">WhatsApp</a>
-      <button class="link" id="copyBtn" type="button">Copy link</button>
+    <div class="fields" id="fields" hidden>
+      <input id="nameInput" maxlength="24" placeholder="Your name" autocomplete="nickname" aria-label="Your name">
+      <input id="wishInput" maxlength="100" placeholder="A wish for Diwali (optional)" autocomplete="off" aria-label="A wish for Diwali">
     </div>
     <p class="warn" id="warn" hidden></p>
     <p class="update" id="update" hidden>A newer version of the map is out. <button class="link" id="updateBtn" type="button">Refresh</button></p>
@@ -74,6 +82,6 @@
   <div class="tooltip" id="tooltip" hidden></div>
   <div class="toasts" id="toasts"></div>
 
-  <script type="module" src="app.js?v=069a81ecdc"></script>
+  <script type="module" src="app.js?v=e7a79191f4"></script>
 </body>
 </html>

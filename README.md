@@ -6,6 +6,7 @@ A blank night globe, just coastlines, country borders and Indian states, that fl
 
 - Your city comes from a free IP lookup. Tap **Not right?** to use precise browser location. Only the city name and coordinates rounded to about 10 km are shared.
 - Every diya is one small warm dot, and it stays lit for everyone who visits. The map starts dark and fills in as people light diyas, so busy cities glow like cities at night. The **Brightest cities** leaderboard ranks them live; click a city to fly there.
+- The controls are icons; hover (or focus) any of them to see what it does. Pick a cracker colour (or mixed) and a height (small, medium, large) from the swatch next to the cracker button. Your choice is remembered and sent with each cracker, so everyone sees the same colour and height.
 - Crackers whistle as the rocket climbs, then boom, timed so the bang lands exactly when the shell bursts on screen. Your own crackers are loud; other people's are softer and farther away.
 - Use **My city / India / World** to jump between your city, India and the whole world. Hover or tap a diya to read the wishes from that city.
 - Private room for family or friends: add `?c=<room-name>` to the link.

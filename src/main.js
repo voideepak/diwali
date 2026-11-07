@@ -28,6 +28,11 @@ const COLORS = [
   [0.35, 1.0, 0.55], [1.0, 0.5, 0.12], [1.0, 0.95, 0.85],
 ];
 const CRACKER_TYPES = ['peony', 'ring', 'willow', 'double', 'glitter'];
+// Picker choices. Colour is an index into COLORS (null = mixed); height 0 small, 1 medium, 2 large.
+const COLOR_NAMES = ['Rose', 'Gold', 'Sky blue', 'Violet', 'Green', 'Orange', 'White'];
+const LIFT = [0.55, 1, 1.65]; // how high the shell climbs
+const SPREAD = [0.75, 1, 1.3]; // how wide it bursts
+const tint = (c, k) => c.map((x) => x + (1 - x) * k); // towards white
 
 // ============================================================
 // Helpers
@@ -208,10 +213,10 @@ function sparkle(pos, n, scale) {
 const rockets = [];
 function launch(lat, lng, opts = {}) {
   if (!opts.force && rockets.length > 80) return; // sky is full; keep phones smooth
-  const scale = opts.scale || fxScale();
+  const scale = (opts.scale || fxScale()) * (opts.spread || 1);
   const start = globe.getCoords(lat, lng, 0.004);
   const n = new THREE.Vector3(start.x, start.y, start.z).normalize();
-  const height = rand(5, 8) * scale + 1.5;
+  const height = (rand(5, 8) * scale + 1.5) * (opts.lift || 1);
   const fuse = opts.fuse || 0.9;
   rockets.push({
     pos: new THREE.Vector3(start.x, start.y, start.z),
@@ -544,6 +549,8 @@ function parse(ev) {
     wish: clean(c.w, 100),
     ...loc,
     kind: CRACKER_TYPES.includes(c.k) ? c.k : null,
+    col: Number.isInteger(c.col) && c.col >= 0 && c.col < COLORS.length ? c.col : null,
+    h: c.h === 0 || c.h === 2 ? c.h : 1,
     x: Math.floor(Number(c.x)) || 0,
     created,
   };
@@ -649,16 +656,22 @@ function priority(it) {
 function show(e, spot, c, local, volley = 1) {
   const jl = e.lat + rand(-0.15, 0.15), jg = e.lng + rand(-0.15, 0.15);
   if (e.type === 'c') {
+    // the sender's chosen colour and height; mixed colours stay random
+    const look = () => {
+      const o = { lift: LIFT[e.h], spread: SPREAD[e.h] };
+      if (e.col != null) { const c0 = COLORS[e.col]; o.colA = c0; o.colB = tint(c0, Math.random() < 0.5 ? 0.45 : 0.15); }
+      return o;
+    };
     if (local) {
       // your own cracker is the hero: a bigger volley right above your city
       const s = Math.max(fxScale(), 1.5) * 1.8;
-      launch(jl, jg, { type: e.kind || undefined, scale: s, fuse: BANG, snd: 1, force: true });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6, force: true });
-      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7, force: true });
+      launch(jl, jg, { ...look(), type: e.kind || undefined, scale: s, fuse: BANG, snd: 1, force: true });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { ...look(), delay: 0.45, scale: s * 0.8, fuse: 1.3, snd: 0.6, force: true });
+      launch(jl + rand(-0.4, 0.4), jg + rand(-0.4, 0.4), { ...look(), delay: 0.9, scale: s * 0.9, fuse: 1.4, snd: 0.7, force: true });
     } else {
-      launch(jl, jg, { type: e.kind || undefined, snd: 0.3 });
+      launch(jl, jg, { ...look(), type: e.kind || undefined, snd: 0.3 });
       const extra = volley > 1 ? Math.min(volley - 1, 3) : (Math.random() < 0.5 ? 1 : 0);
-      for (let i = 0; i < extra; i++) launch(jl + rand(-0.3, 0.3), jg + rand(-0.3, 0.3), { delay: rand(0.2, 0.9), snd: 0.2 });
+      for (let i = 0; i < extra; i++) launch(jl + rand(-0.3, 0.3), jg + rand(-0.3, 0.3), { ...look(), delay: rand(0.2, 0.9), snd: 0.2 });
     }
   } else {
     const p = globe.getCoords(spot.lat, spot.lng, 0.004);
@@ -952,19 +965,20 @@ function placeLabel(l) {
 function setMe(l) {
   me = { ...l, lat: round1(l.lat), lng: round1(l.lng) };
   store.set('dg.loc', me);
-  $('locLabel').textContent = placeLabel(me);
+  setLoc(placeLabel(me));
   renderBoard();
 }
 
+function setLoc(text) { const b = $('locFix'); b.dataset.tip = text; b.setAttribute('aria-label', text + '. Click to use your exact location'); }
 $('locFix').addEventListener('click', async () => {
   if (!navigator.geolocation) { alert('Location is not available in this browser.'); return; }
-  $('locLabel').textContent = 'Finding you…';
+  setLoc('Finding you…');
   try {
     setMe(await preciseLocation());
     flyToMe(1800);
     toastText(`Moved you to <b>${escapeHtml(me.city || 'your spot')}</b>. Only your city is shared, never your exact location.`);
   } catch {
-    $('locLabel').textContent = placeLabel(me);
+    setLoc(placeLabel(me));
     toastText('Could not get your location. Using your approximate city.');
   }
 });
@@ -1014,7 +1028,6 @@ async function intro() {
   }
   $('intro').classList.add('gone');
   setTimeout(() => $('intro').remove(), 900);
-  if (!nameInput.value) nameInput.focus({ preventScroll: true });
 }
 
 // ============================================================
@@ -1025,6 +1038,7 @@ nameInput.value = store.get('dg.name', '');
 function needName() {
   const name = clean(nameInput.value, 24);
   if (name) { store.set('dg.name', name); return name; }
+  openFields(true);
   nameInput.classList.remove('shake'); void nameInput.offsetWidth; nameInput.classList.add('shake');
   nameInput.focus();
   return null;
@@ -1042,12 +1056,63 @@ $('diyaBtn').addEventListener('click', () => {
   setTimeout(() => { ingest(ev, true); chime(); }, altitude() < 1.0 ? 900 : 100);
   toastText(`Your diya is lit in <b>${escapeHtml(me.city || 'your city')}</b>. That new dot is you.`);
 });
+// Name and wish live behind the pencil; they open by themselves when a diya needs a name.
+function openFields(open) {
+  $('fields').hidden = !open;
+  $('nameBtn').setAttribute('aria-expanded', String(open));
+}
+$('nameBtn').addEventListener('click', () => {
+  const open = $('fields').hidden;
+  openFields(open);
+  if (open) (nameInput.value ? wishInput : nameInput).focus();
+});
+nameInput.addEventListener('input', () => nameInput.classList.remove('shake'));
+for (const el of [nameInput, wishInput]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('diyaBtn').click(); });
+
+// Cracker look: colour and height, remembered per browser and sent with each cracker
+let crackerCol = store.get('dg.col', null);
+if (!(Number.isInteger(crackerCol) && crackerCol >= 0 && crackerCol < COLORS.length)) crackerCol = null;
+let crackerH = [0, 1, 2].includes(store.get('dg.h', 1)) ? store.get('dg.h', 1) : 1;
+const css = (c) => `rgb(${c.map((x) => Math.round(x * 255)).join(' ')})`;
+const swatchBox = $('swatches');
+for (const i of [null, ...COLORS.keys()]) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.dataset.col = i == null ? '' : i;
+  const label = i == null ? 'Mixed colours' : COLOR_NAMES[i];
+  b.setAttribute('aria-label', label); b.dataset.tip = label;
+  b.innerHTML = `<span class="swatch"${i == null ? '' : ` style="--sw:${css(COLORS[i])}"`}></span>`;
+  b.addEventListener('click', () => { crackerCol = i; store.set('dg.col', i); syncLook(); });
+  swatchBox.append(b);
+}
+for (const b of document.querySelectorAll('.sizes button')) {
+  b.addEventListener('click', () => { crackerH = Number(b.dataset.h); store.set('dg.h', crackerH); syncLook(); });
+}
+function syncLook() {
+  for (const b of swatchBox.children) b.classList.toggle('on', b.dataset.col === (crackerCol == null ? '' : String(crackerCol)));
+  for (const b of document.querySelectorAll('.sizes button')) b.classList.toggle('on', Number(b.dataset.h) === crackerH);
+  const col = crackerCol == null ? null : css(COLORS[crackerCol]);
+  $('styleSwatch').style.setProperty('--sw', col);
+  $('crackerBtn').style.setProperty('--crk', col);
+  const what = `${crackerCol == null ? 'mixed' : COLOR_NAMES[crackerCol].toLowerCase()}, ${['small', 'medium', 'large'][crackerH]}`;
+  $('styleBtn').dataset.tip = `Colour and height: ${what}`;
+  $('crackerBtn').dataset.tip = `Burst a cracker (${what})`;
+}
+syncLook();
+const stylePop = $('stylePop');
+function openStyle(open) { stylePop.hidden = !open; $('styleBtn').setAttribute('aria-expanded', String(open)); }
+$('styleBtn').addEventListener('click', () => openStyle(stylePop.hidden));
+addEventListener('pointerdown', (e) => { if (!stylePop.hidden && !e.target.closest('.pop-wrap')) openStyle(false); });
+addEventListener('keydown', (e) => { if (e.key === 'Escape') openStyle(false); });
+
 $('crackerBtn').addEventListener('click', () => {
   if (!me || !canAct(1200)) return;
   const name = clean(nameInput.value, 24) || store.get('dg.name', '') || 'Someone';
   ensureAudio();
   const k = pick(CRACKER_TYPES);
-  const ev = publish({ t: 'c', n: name, city: me.city, cc: me.cc, la: me.lat, lo: me.lng, k });
+  const look = { h: crackerH };
+  if (crackerCol != null) look.col = crackerCol;
+  const ev = publish({ t: 'c', n: name, city: me.city, cc: me.cc, la: me.lat, lo: me.lng, k, ...look });
   const wasClose = altitude() < 1.0;
   pullBack();
   setTimeout(() => ingest(ev, true), wasClose ? 700 : 0);
@@ -1060,11 +1125,11 @@ function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&a
 
 function updateStats() {
   $('diyaCount').textContent = totals.diyas.toLocaleString();
-  $('diyaLabel').textContent = totals.diyas === 1 ? 'diya' : 'diyas';
-  $('crackerLabel').textContent = totals.crackers === 1 ? 'cracker' : 'crackers';
-  $('cityLabel').textContent = cities.size === 1 ? 'city' : 'cities';
   $('crackerCount').textContent = totals.crackers.toLocaleString();
   $('cityCount').textContent = cities.size.toLocaleString();
+  $('diyaStat').dataset.tip = totals.diyas === 1 ? 'diya lit' : 'diyas lit';
+  $('crackerStat').dataset.tip = totals.crackers === 1 ? 'cracker burst' : 'crackers burst';
+  $('cityStat').dataset.tip = cities.size === 1 ? 'city' : 'cities';
 }
 
 function toast(e) {
@@ -1114,8 +1179,9 @@ $('copyBtn').addEventListener('click', async () => {
   try {
     if (navigator.share && matchMedia('(pointer: coarse)').matches) { await navigator.share({ title: 'Diwali Globe', text: 'Light up your city this Diwali 🪔', url }); return; }
     await navigator.clipboard.writeText(url);
-    $('copyBtn').textContent = 'Copied ✓';
-    setTimeout(() => { $('copyBtn').textContent = 'Copy link'; }, 1800);
+    const b = $('copyBtn');
+    b.dataset.tip = 'Copied'; b.classList.add('tip-now');
+    setTimeout(() => { b.dataset.tip = 'Copy link'; b.classList.remove('tip-now'); }, 1600);
   } catch { prompt('Copy this link:', url); }
 });
 
